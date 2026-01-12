@@ -2,15 +2,9 @@
 # Docs: https://docs.railway.app/reference/config-as-code
 
 [build]
-# Use Nixpacks builder (default, handles Python automatically)
-builder = "nixpacks"
-
-[build.nixpacksPlan.phases.setup]
-nixPkgs = ["python311"]
-
-[build.nixpacksPlan.phases.install]
-# Use Python 3.11 explicitly
-cmds = ["python3.11 -m venv /app/.venv", "pip install -r requirements.txt"]
+# Use Dockerfile instead of Nixpacks (Dockerfile specifies Python 3.11)
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
 
 [deploy]
 # Start command (can also use Procfile)
