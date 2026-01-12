@@ -39,3 +39,6 @@ test_trades.db
 # Temp files
 tmpclaude-*
 *.tmp
+
+# Superpowers is a git submodule/clone - don't track its .git
+.superpowers/.git/
