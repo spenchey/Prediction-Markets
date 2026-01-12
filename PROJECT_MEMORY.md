@@ -1,7 +1,7 @@
 # Project Memory - Prediction Market Whale Tracker
 
 > This file helps AI assistants understand the project context and continue work from previous sessions.
-> **Last Updated:** January 12, 2026
+> **Last Updated:** January 12, 2026 (Evening - Railway Deployment In Progress)
 
 ## Project Overview
 
@@ -135,21 +135,96 @@ WEEKLY_DIGEST_DAY=mon
 - [x] Subscription management module
 - [x] Email digest scheduler
 - [x] Configuration system
+- [x] **Pushed to GitHub** - https://github.com/spenchey/Prediction-Markets
+- [x] **Fixed Polymarket API client** (see API Fixes section below)
+- [x] **Created deployment files** (Dockerfile, railway.toml, nixpacks.toml, Procfile)
+- [x] **Added PostgreSQL support** to database.py
+- [x] **Removed pandas/numpy** from requirements (caused build failures)
 
-### In Progress / Needs Work
-- [ ] Push to GitHub repository
+### In Progress - Railway Deployment (PICK UP HERE)
+**Status:** Railway service created, PostgreSQL addon connected, but build was failing due to cached old requirements.txt
+
+**What was done:**
+1. Added `NIXPACKS_CACHE_VERSION=2` environment variable to bust cache
+2. Waiting for redeploy to complete
+
+**Next steps when resuming:**
+1. Check Railway dashboard - see if build succeeded after cache bust
+2. If still failing, try "Clear build cache" in Railway Settings
+3. Once build succeeds, set these environment variables in Railway:
+   - `WHALE_THRESHOLD_USDC` = 10000
+   - `POLL_INTERVAL` = 30
+   - `LOG_LEVEL` = INFO
+   - `RESEND_API_KEY` = (if using email alerts)
+   - `DISCORD_WEBHOOK_URL` = (if using Discord)
+   - `ALERT_EMAIL` = your@email.com
+4. Verify `/health` endpoint returns healthy status
+5. Monitor logs for successful trade polling
+
+### Future Work
 - [ ] Win rate tracking (needs market resolution data)
 - [ ] Stripe payment integration
 - [ ] Automated trading module
 - [ ] Mobile app (React Native)
 - [ ] Kalshi integration
+- [ ] WebSocket support for real-time updates
+- [ ] Machine learning for pattern detection
+- [ ] Portfolio management/copy trading
 
-### Future Enhancements
-- WebSocket support for real-time updates
-- Machine learning for pattern detection
-- Portfolio management/copy trading
-- Historical backtesting
-- Multi-platform aggregation
+---
+
+## API Fixes Applied (January 12, 2026)
+
+The Polymarket APIs had changed since the original code was written. These fixes were applied:
+
+### 1. Markets API - outcomePrices Format Change
+**File:** `src/polymarket_client.py` - `get_active_markets()`
+**Issue:** `outcomePrices` is now a JSON string like `'["0.65", "0.35"]'` instead of a list
+**Fix:** Added JSON parsing:
+```python
+import json
+outcome_prices_raw = item.get("outcomePrices", '["0.5", "0.5"]')
+if isinstance(outcome_prices_raw, str):
+    prices = json.loads(outcome_prices_raw)
+else:
+    prices = outcome_prices_raw
+```
+
+### 2. Trades API - Authentication Required
+**File:** `src/polymarket_client.py` - `get_recent_trades()` and `get_trades_by_address()`
+**Issue:** `clob.polymarket.com` now requires authentication (returns 401)
+**Fix:** Changed to use `data-api.polymarket.com` which is public:
+```python
+# Old (broken): https://clob.polymarket.com/trades
+# New (working): https://data-api.polymarket.com/trades
+```
+
+### 3. Database URL for PostgreSQL
+**File:** `src/database.py`
+**Added:** `get_async_database_url()` function to convert PostgreSQL URLs for asyncpg:
+```python
+def get_async_database_url(url: str) -> str:
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    elif url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+asyncpg://", 1)
+    return url
+```
+
+---
+
+## Deployment Files Created
+
+| File | Purpose |
+|------|---------|
+| `Dockerfile` | Multi-stage build with Python 3.11-slim, non-root user |
+| `railway.toml` | Railway config - uses Dockerfile builder, health checks |
+| `nixpacks.toml` | Pins Python 3.11 if Nixpacks is used |
+| `.dockerignore` | Excludes tests, docs, local DBs from container |
+| `Procfile` | Heroku-style start command (backup) |
+| `.python-version` | Specifies Python 3.11 |
+
+---
 
 ## How to Continue Development
 
