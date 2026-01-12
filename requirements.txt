@@ -1,0 +1,50 @@
+# Prediction Market Tracker - Dependencies
+# Install with: pip install -r requirements.txt
+
+# HTTP requests
+httpx==0.27.0          # Modern async HTTP client (better than requests)
+websockets==12.0       # For real-time WebSocket connections
+
+# Database
+sqlalchemy==2.0.25     # ORM for database operations
+aiosqlite==0.19.0      # Async SQLite support
+asyncpg==0.29.0        # PostgreSQL async support (production)
+
+# Data processing
+pandas==2.1.4          # Data manipulation
+numpy==1.26.3          # Numerical operations
+
+# Scheduling
+apscheduler==3.10.4    # Job scheduling for digests and polling
+
+# Configuration
+python-dotenv==1.0.0   # Load environment variables from .env file
+pydantic==2.5.3        # Data validation and settings management
+pydantic-settings==2.1.0
+
+# Web API
+fastapi==0.109.0       # Web framework
+uvicorn==0.27.0        # ASGI server
+python-multipart==0.0.6  # Form data support
+
+# Authentication & Security
+python-jose[cryptography]==3.3.0  # JWT tokens
+passlib[bcrypt]==1.7.4  # Password hashing
+
+# Alerting - Notifications
+# (Most notification channels use httpx, no extra deps needed)
+# For email templates:
+jinja2==3.1.2          # Email templating
+
+# Payments (optional - for subscription billing)
+# stripe==7.10.0       # Stripe integration (uncomment when needed)
+
+# Development & Logging
+rich==13.7.0           # Pretty console output
+python-json-logger==2.0.7  # Structured logging
+loguru==0.7.2          # Better logging
+
+# Testing
+pytest==7.4.4          # Testing framework
+pytest-asyncio==0.23.3 # Async test support
+httpx[http2]==0.27.0   # For test client
