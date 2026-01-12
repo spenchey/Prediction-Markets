@@ -1,0 +1,65 @@
+# Docker ignore - exclude from container builds
+
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+ENV/
+.pytest_cache/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment files (will be set in Railway)
+.env
+.env.local
+.env.*.local
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+trades.db
+test_trades.db
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tests (not needed in production)
+tests/
+test_*.py
+simple_test.py
+quick_test.py
+debug_api.py
+
+# Documentation
+*.md
+docs/
+
+# Frontend (built separately)
+dashboard/
+
+# Superpowers framework (not needed in runtime)
+.superpowers/
+
+# Temp files
+tmpclaude-*
+*.tmp

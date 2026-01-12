@@ -1,0 +1,32 @@
+# Railway Configuration for Prediction Market Tracker
+# Docs: https://docs.railway.app/reference/config-as-code
+
+[build]
+# Use Nixpacks builder (default, handles Python automatically)
+builder = "nixpacks"
+
+[build.nixpacksPlan.phases.setup]
+nixPkgs = ["python311"]
+
+[deploy]
+# Start command (can also use Procfile)
+startCommand = "uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8000}"
+
+# Health check - Railway will restart if this fails
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+
+# Restart policy
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+# Number of replicas (1 for starter, can scale up)
+numReplicas = 1
+
+[deploy.env]
+# Environment variables (set sensitive ones in Railway dashboard)
+LOG_LEVEL = "INFO"
+DEBUG = "false"
+
+# These will be overridden by Railway's PostgreSQL addon
+# DATABASE_URL is automatically set when you add PostgreSQL

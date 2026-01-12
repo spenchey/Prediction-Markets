@@ -2,13 +2,15 @@
 Polymarket API Client
 
 This module handles all communication with Polymarket's APIs.
-Polymarket has two main APIs:
-1. CLOB API (clob.polymarket.com) - Order book, trades, prices
-2. Gamma API (gamma-api.polymarket.com) - Market metadata, events
+Polymarket has several APIs:
+1. Gamma API (gamma-api.polymarket.com) - Market metadata, events
+2. Data API (data-api.polymarket.com) - Public trade data (no auth needed!)
+3. CLOB API (clob.polymarket.com) - Order book, requires auth for trades
 
-No authentication is needed for reading public data!
+Updated January 2026 to use correct endpoints.
 """
 import httpx
+import json
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 from loguru import logger
@@ -56,13 +58,13 @@ class PolymarketClient:
     
     def __init__(
         self,
-        clob_base_url: str = "https://clob.polymarket.com",
         gamma_base_url: str = "https://gamma-api.polymarket.com",
-        strapi_url: str = "https://strapi-matic.poly.market"  # Alternative public endpoint
+        data_api_url: str = "https://data-api.polymarket.com",
+        clob_base_url: str = "https://clob.polymarket.com"
     ):
-        self.clob_base_url = clob_base_url
         self.gamma_base_url = gamma_base_url
-        self.strapi_url = strapi_url
+        self.data_api_url = data_api_url  # Public trades endpoint (no auth)
+        self.clob_base_url = clob_base_url  # Order book (auth needed for trades)
         self._http_client: Optional[httpx.AsyncClient] = None
     
     async def __aenter__(self):
@@ -99,10 +101,10 @@ class PolymarketClient:
     async def get_active_markets(self, limit: int = 100) -> List[Market]:
         """
         Fetch active prediction markets from Polymarket.
-        
+
         Args:
             limit: Maximum number of markets to fetch
-            
+
         Returns:
             List of Market objects
         """
@@ -120,31 +122,56 @@ class PolymarketClient:
             )
             response.raise_for_status()
             data = response.json()
-            
+
             markets = []
             for item in data:
                 try:
+                    # Skip closed markets
+                    if item.get("closed", False):
+                        continue
+
+                    # Parse outcomePrices - it's a JSON string like '["0.65", "0.35"]'
+                    outcome_prices_raw = item.get("outcomePrices", '["0.5", "0.5"]')
+                    if isinstance(outcome_prices_raw, str):
+                        prices = json.loads(outcome_prices_raw)
+                    else:
+                        prices = outcome_prices_raw
+
+                    # Parse outcomes - also a JSON string
+                    outcomes_raw = item.get("outcomes", '["Yes", "No"]')
+                    if isinstance(outcomes_raw, str):
+                        outcomes = json.loads(outcomes_raw)
+                    else:
+                        outcomes = outcomes_raw
+
+                    # Build outcome prices dict
+                    outcome_prices = {}
+                    for i, outcome in enumerate(outcomes):
+                        if i < len(prices):
+                            outcome_prices[outcome] = float(prices[i])
+
+                    # Default to Yes/No if not parsed
+                    if "Yes" not in outcome_prices:
+                        outcome_prices = {"Yes": 0.5, "No": 0.5}
+
                     market = Market(
                         id=item.get("conditionId", item.get("id", "")),
                         question=item.get("question", ""),
                         slug=item.get("slug", ""),
-                        outcome_prices={
-                            "Yes": float(item.get("outcomePrices", ["0.5", "0.5"])[0]),
-                            "No": float(item.get("outcomePrices", ["0.5", "0.5"])[1])
-                        },
+                        outcome_prices=outcome_prices,
                         volume=float(item.get("volume", 0) or 0),
                         liquidity=float(item.get("liquidity", 0) or 0),
-                        end_date=None,  # Parse if available
-                        active=item.get("active", True)
+                        end_date=None,
+                        active=item.get("active", True) and not item.get("closed", False)
                     )
                     markets.append(market)
-                except (KeyError, ValueError, IndexError) as e:
+                except (KeyError, ValueError, IndexError, json.JSONDecodeError) as e:
                     logger.warning(f"Failed to parse market: {e}")
                     continue
-            
+
             logger.info(f"Fetched {len(markets)} active markets")
             return markets
-            
+
         except httpx.HTTPError as e:
             logger.error(f"Failed to fetch markets: {e}")
             return []
@@ -187,32 +214,32 @@ class PolymarketClient:
     ) -> List[Trade]:
         """
         Fetch recent trades from Polymarket.
-        
-        This uses the CLOB API which provides detailed trade data
-        including wallet addresses (for whale tracking!).
-        
+
+        Uses the public Data API which provides trade data with wallet addresses
+        for whale tracking - no authentication required!
+
         Args:
             market_id: Filter by specific market (optional)
             limit: Maximum trades to fetch
             before_timestamp: Get trades before this time
-            
+
         Returns:
             List of Trade objects
         """
         try:
             params = {"limit": limit}
-            
+
             if market_id:
                 params["market"] = market_id
-            
-            # The /trades endpoint gives us individual trades
+
+            # Use the public Data API for trades (no auth needed)
             response = await self.http.get(
-                f"{self.clob_base_url}/trades",
+                f"{self.data_api_url}/trades",
                 params=params
             )
             response.raise_for_status()
             data = response.json()
-            
+
             trades = []
             for item in data:
                 try:
@@ -220,29 +247,40 @@ class PolymarketClient:
                     size = float(item.get("size", 0))
                     price = float(item.get("price", 0))
                     amount_usd = size * price
-                    
+
+                    # Parse timestamp - data-api returns Unix timestamp
+                    ts = item.get("timestamp")
+                    if isinstance(ts, int):
+                        timestamp = datetime.fromtimestamp(ts)
+                    elif isinstance(ts, str):
+                        timestamp = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                    else:
+                        timestamp = datetime.now()
+
+                    # Generate a unique ID from tx hash + size
+                    tx_hash = item.get("transactionHash", "")
+                    trade_id = f"{tx_hash[:16]}_{size}" if tx_hash else str(ts)
+
                     trade = Trade(
-                        id=item.get("id", ""),
-                        market_id=item.get("market", ""),
-                        trader_address=item.get("maker", item.get("owner", "")),
+                        id=trade_id,
+                        market_id=item.get("conditionId", item.get("market", "")),
+                        trader_address=item.get("proxyWallet", item.get("maker", "")),
                         outcome=item.get("outcome", ""),
-                        side=item.get("side", ""),
+                        side=item.get("side", "").lower(),  # Normalize to lowercase
                         size=size,
                         price=price,
                         amount_usd=amount_usd,
-                        timestamp=datetime.fromisoformat(
-                            item.get("timestamp", datetime.now().isoformat()).replace("Z", "+00:00")
-                        ),
-                        transaction_hash=item.get("transactionHash", "")
+                        timestamp=timestamp,
+                        transaction_hash=tx_hash
                     )
                     trades.append(trade)
                 except (KeyError, ValueError) as e:
                     logger.warning(f"Failed to parse trade: {e}")
                     continue
-            
+
             logger.info(f"Fetched {len(trades)} trades")
             return trades
-            
+
         except httpx.HTTPError as e:
             logger.error(f"Failed to fetch trades: {e}")
             return []
@@ -254,55 +292,66 @@ class PolymarketClient:
     ) -> List[Trade]:
         """
         Fetch all trades by a specific wallet address.
-        
+
         This is KEY for tracking whale behavior - you can see
         their entire trading history!
-        
+
         Args:
             wallet_address: The Ethereum wallet address
             limit: Maximum trades to fetch
-            
+
         Returns:
             List of Trade objects from this address
         """
         try:
+            # Data API supports filtering by proxyWallet
             response = await self.http.get(
-                f"{self.clob_base_url}/trades",
+                f"{self.data_api_url}/trades",
                 params={
-                    "maker": wallet_address,
+                    "proxyWallet": wallet_address,
                     "limit": limit
                 }
             )
             response.raise_for_status()
             data = response.json()
-            
+
             trades = []
             for item in data:
                 try:
                     size = float(item.get("size", 0))
                     price = float(item.get("price", 0))
-                    
+
+                    # Parse timestamp
+                    ts = item.get("timestamp")
+                    if isinstance(ts, int):
+                        timestamp = datetime.fromtimestamp(ts)
+                    elif isinstance(ts, str):
+                        timestamp = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                    else:
+                        timestamp = datetime.now()
+
+                    tx_hash = item.get("transactionHash", "")
+                    trade_id = f"{tx_hash[:16]}_{size}" if tx_hash else str(ts)
+
                     trade = Trade(
-                        id=item.get("id", ""),
-                        market_id=item.get("market", ""),
+                        id=trade_id,
+                        market_id=item.get("conditionId", item.get("market", "")),
                         trader_address=wallet_address,
                         outcome=item.get("outcome", ""),
-                        side=item.get("side", ""),
+                        side=item.get("side", "").lower(),
                         size=size,
                         price=price,
                         amount_usd=size * price,
-                        timestamp=datetime.fromisoformat(
-                            item.get("timestamp", datetime.now().isoformat()).replace("Z", "+00:00")
-                        ),
-                        transaction_hash=item.get("transactionHash", "")
+                        timestamp=timestamp,
+                        transaction_hash=tx_hash
                     )
                     trades.append(trade)
                 except (KeyError, ValueError) as e:
                     continue
-            
+
             logger.info(f"Found {len(trades)} trades for address {wallet_address[:10]}...")
             return trades
-            
+
         except httpx.HTTPError as e:
             logger.error(f"Failed to fetch trades for address: {e}")
             return []

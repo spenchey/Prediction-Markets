@@ -3,7 +3,7 @@ Database Module
 
 This module handles storing trades and alerts in a database.
 We use SQLite for local development (simple, no setup needed)
-and can easily switch to PostgreSQL for production.
+and PostgreSQL for production (Railway, Heroku, etc.).
 
 SQLAlchemy makes this database-agnostic!
 """
@@ -18,6 +18,30 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from loguru import logger
 
 from .config import settings
+
+
+def get_async_database_url(url: str) -> str:
+    """
+    Convert database URL to async-compatible format.
+
+    Railway and other providers give URLs like:
+      postgresql://user:pass@host/db
+
+    But SQLAlchemy async needs:
+      postgresql+asyncpg://user:pass@host/db
+
+    For SQLite:
+      sqlite:///./trades.db -> sqlite+aiosqlite:///./trades.db
+    """
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    elif url.startswith("postgres://"):
+        # Heroku uses postgres:// which is deprecated
+        return url.replace("postgres://", "postgresql+asyncpg://", 1)
+    elif url.startswith("sqlite://") and "+aiosqlite" not in url:
+        return url.replace("sqlite://", "sqlite+aiosqlite://", 1)
+    return url
+
 
 # Create the base class for our models
 Base = declarative_base()
@@ -146,11 +170,20 @@ class Database:
     """
     
     def __init__(self, database_url: str = None):
-        self.database_url = database_url or settings.DATABASE_URL
-        self.engine = create_async_engine(
-            self.database_url,
-            echo=settings.DEBUG  # Log SQL queries in debug mode
-        )
+        raw_url = database_url or settings.DATABASE_URL
+        # Convert to async-compatible URL format
+        self.database_url = get_async_database_url(raw_url)
+
+        # PostgreSQL-specific settings for better performance
+        engine_kwargs = {
+            "echo": settings.DEBUG,  # Log SQL queries in debug mode
+        }
+        if "postgresql" in self.database_url:
+            engine_kwargs["pool_size"] = 5
+            engine_kwargs["max_overflow"] = 10
+            engine_kwargs["pool_pre_ping"] = True  # Check connections before use
+
+        self.engine = create_async_engine(self.database_url, **engine_kwargs)
         self.async_session = sessionmaker(
             self.engine,
             class_=AsyncSession,

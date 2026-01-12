@@ -256,8 +256,42 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Simple health check for monitoring."""
-    return {"status": "ok"}
+    """
+    Health check endpoint for Railway/container monitoring.
+
+    Returns 200 if all systems operational, 503 if issues detected.
+    """
+    health = {
+        "status": "healthy",
+        "database": "unknown",
+        "monitor": "unknown"
+    }
+
+    # Check database connectivity
+    try:
+        if db:
+            from sqlalchemy import text
+            async with db.async_session() as session:
+                await session.execute(text("SELECT 1"))
+            health["database"] = "connected"
+        else:
+            health["database"] = "not_initialized"
+    except Exception as e:
+        health["database"] = f"error: {str(e)[:50]}"
+        health["status"] = "degraded"
+
+    # Check monitor status
+    if monitor and monitor_task:
+        health["monitor"] = "running" if not monitor_task.done() else "stopped"
+    else:
+        health["monitor"] = "not_started"
+
+    # Return 503 if critical issues
+    if health["status"] != "healthy":
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=503, content=health)
+
+    return health
 
 
 # =========================================
