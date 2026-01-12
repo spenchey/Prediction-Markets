@@ -8,6 +8,10 @@ builder = "nixpacks"
 [build.nixpacksPlan.phases.setup]
 nixPkgs = ["python311"]
 
+[build.nixpacksPlan.phases.install]
+# Use Python 3.11 explicitly
+cmds = ["python3.11 -m venv /app/.venv", "pip install -r requirements.txt"]
+
 [deploy]
 # Start command (can also use Procfile)
 startCommand = "uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8000}"
