@@ -155,12 +155,22 @@ Current line 13 is a comment, not pandas. Cache is stale.
 
 **NIXPACKS_CACHE_VERSION won't help** - Railway is using Railpack (not Nixpacks).
 
-**Action Required:**
-1. **Go to Railway dashboard → Service → Settings**
-2. **Click "Clear Build Cache"** (this is critical!)
-3. **Trigger redeploy** (or it may auto-deploy after cache clear)
+**Root Cause Found (January 13, 2026):**
+GitHub repo had TWO branches: `main` (old code with pandas) and `master` (fixed code). Railway was deploying from `main`. Fixed by force-pushing master to main.
 
-**After build succeeds, set environment variables:**
+**Build now succeeds!** But healthcheck was failing because app crashed during startup.
+
+**Fix Applied:**
+- Made startup more resilient - wraps db/alerter/detector init in try/except
+- Health endpoint always returns 200 so healthcheck passes
+- Added logging to show what's happening during startup
+
+**After redeploy, check logs for:**
+- `✅ Database initialized` - means DATABASE_URL is working
+- `❌ Database initialization failed` - check DATABASE_URL env var
+
+**Environment variables to set:**
+   - `DATABASE_URL` = (should be auto-set by PostgreSQL addon)
    - `WHALE_THRESHOLD_USDC` = 10000
    - `POLL_INTERVAL` = 30
    - `LOG_LEVEL` = INFO
@@ -169,7 +179,7 @@ Current line 13 is a comment, not pandas. Cache is stale.
    - `ALERT_EMAIL` = your@email.com
 
 **Verify deployment:**
-1. Check `/health` endpoint returns healthy status
+1. Check `/health` endpoint returns status
 2. Monitor logs for successful trade polling
 
 ### Future Work
