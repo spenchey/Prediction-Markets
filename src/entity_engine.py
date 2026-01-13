@@ -8,6 +8,7 @@ This module implements graph-based entity detection to identify:
 
 Based on research from:
 - ChatGPT's pm_whale_tracker_v5 (Union-Find clustering)
+- ChatGPT's pm_whale_tracker_v6 (Market liquidity scaling, stable IDs)
 - PolyTrack (cluster detection concept)
 - Polymaster (coordination detection)
 
@@ -17,6 +18,8 @@ Key features:
 3. Edge decay (old connections fade over time)
 4. Saturation + caps (diminishing returns per signal)
 5. Entity-level scoring (aggregate wallet behavior)
+6. Market liquidity scaling (v6) - edges weighted by market activity
+7. Stable entity IDs (v6) - IDs persist across rebuilds
 """
 
 from __future__ import annotations
@@ -257,6 +260,12 @@ class EntityEngine:
 
         # Entity threshold
         entity_edge_threshold: float = 0.75,  # Min weight to consider connected
+
+        # Market liquidity scaling (v6)
+        market_liquidity_window_seconds: int = 3600,  # 1 hour
+        market_liquidity_baseline: float = 50000.0,  # $50k baseline
+        market_importance_min_scale: float = 0.35,  # Min scale factor
+        market_importance_max_scale: float = 1.25,  # Max scale factor
     ):
         # Config
         self.coord_window = timedelta(seconds=coord_window_seconds)
@@ -278,10 +287,17 @@ class EntityEngine:
 
         self.entity_edge_threshold = entity_edge_threshold
 
+        # Market liquidity scaling (v6)
+        self.market_liquidity_window = timedelta(seconds=market_liquidity_window_seconds)
+        self.market_liquidity_baseline = market_liquidity_baseline
+        self.market_importance_min_scale = market_importance_min_scale
+        self.market_importance_max_scale = market_importance_max_scale
+
         # State
         self.edges: Dict[Tuple[str, str], WalletEdge] = {}
         self.entities: Dict[str, Entity] = {}
         self.wallet_to_entity: Dict[str, str] = {}
+        self._entity_seq: int = 0  # Sequential entity ID counter (v6)
 
         # Tracking for time-coupled detection
         self._recent_by_market: Dict[str, Deque[Tuple[datetime, str]]] = defaultdict(deque)
@@ -294,6 +310,9 @@ class EntityEngine:
         self._wallet_funders: Dict[str, str] = {}
         self._funder_wallets: Dict[str, Set[str]] = defaultdict(set)
 
+        # Market volume tracking (v6)
+        self._market_trades: Dict[str, Deque[Tuple[datetime, float]]] = defaultdict(deque)
+
         self._last_rebuild = datetime.now()
 
     def _decay_factor(self, dt_seconds: float) -> float:
@@ -301,6 +320,49 @@ class EntityEngine:
         if self.edge_halflife_seconds <= 0 or dt_seconds <= 0:
             return 1.0
         return 0.5 ** (dt_seconds / self.edge_halflife_seconds)
+
+    def _clamp(self, x: float, lo: float, hi: float) -> float:
+        """Clamp value between lo and hi."""
+        return max(lo, min(hi, x))
+
+    def _market_scale(self, market_id: str, timestamp: datetime) -> float:
+        """
+        Scale edge weights based on market liquidity (v6).
+
+        High liquidity markets => scale down (need more evidence to link wallets)
+        Low liquidity markets => scale up (less evidence needed)
+
+        Returns scale factor between market_importance_min_scale and market_importance_max_scale.
+        """
+        cutoff = timestamp - self.market_liquidity_window
+        dq = self._market_trades.get(market_id, deque())
+
+        # Prune old entries
+        while dq and dq[0][0] < cutoff:
+            dq.popleft()
+
+        # Sum recent volume
+        volume = sum(cash for ts, cash in dq)
+
+        # Log-like scaling around baseline
+        # baseline => ~1.0; 10x baseline => ~0.5; 0.1x baseline => ~1.2 (capped)
+        baseline = max(self.market_liquidity_baseline, 1.0)
+        ratio = volume / baseline if baseline > 0 else 0.0
+        scale = 1.0 / (1.0 + math.log10(1.0 + max(ratio, 0.0)))
+
+        # Normalize: at ratio=1 => 1/(1+log10(2)) ≈ 0.77; adjust upward
+        scale = scale / 0.77
+
+        return self._clamp(scale, self.market_importance_min_scale, self.market_importance_max_scale)
+
+    def _next_entity_id(self) -> str:
+        """Generate next sequential entity ID (v6 stable IDs)."""
+        self._entity_seq += 1
+        return f"ent_{self._entity_seq:06d}"
+
+    def _record_market_trade(self, market_id: str, timestamp: datetime, cash: float) -> None:
+        """Record a trade for market volume tracking."""
+        self._market_trades[market_id].append((timestamp, cash))
 
     def _get_or_create_edge(self, wallet_a: str, wallet_b: str) -> WalletEdge:
         """Get or create an edge between two wallets."""
@@ -363,18 +425,26 @@ class EntityEngine:
         market_id: str,
         timestamp: datetime,
         funder: Optional[str] = None,
+        cash: float = 0.0,  # v6: trade amount for volume tracking
     ) -> None:
         """
         Process a trade for entity detection.
 
         Updates edges based on:
         1. Shared funder (if known)
-        2. Time-coupled trading (same market, close timing)
-        3. Market overlap (similar trading patterns)
+        2. Time-coupled trading (same market, close timing) - scaled by liquidity
+        3. Market overlap (similar trading patterns) - scaled by liquidity
         """
         wallet = wallet.lower()
 
-        # 1. Shared funder detection
+        # Record trade for market volume tracking (v6)
+        if cash > 0:
+            self._record_market_trade(market_id, timestamp, cash)
+
+        # Calculate market-based scale factor (v6)
+        scale = self._market_scale(market_id, timestamp)
+
+        # 1. Shared funder detection (not market-dependent, no scale)
         if funder:
             self.set_wallet_funder(wallet, funder)
 
@@ -399,13 +469,13 @@ class EntityEngine:
         while dq and dq[0][0] < cutoff:
             dq.popleft()
 
-        # Add edges to recent traders in same market
+        # Add edges to recent traders in same market (scaled by liquidity v6)
         for other_ts, other_wallet in dq:
             if other_wallet != wallet:
                 self._add_edge_signal(
                     wallet, other_wallet,
                     signal="time_coupled",
-                    base_weight=self.edge_time_couple_inc,
+                    base_weight=self.edge_time_couple_inc * scale,
                     cap=self.cap_time_coupled,
                     timestamp=timestamp,
                 )
@@ -457,7 +527,8 @@ class EntityEngine:
                 jaccard = common / union
 
                 if jaccard >= self.overlap_jaccard_threshold:
-                    add_weight = self.edge_overlap_weight * min(1.0, jaccard / 0.6)
+                    # Scale by market liquidity (v6)
+                    add_weight = self.edge_overlap_weight * min(1.0, jaccard / 0.6) * scale
                     self._add_edge_signal(
                         wallet, other_wallet,
                         signal="market_overlap",
@@ -478,7 +549,12 @@ class EntityEngine:
         self.rebuild_entities()
 
     def rebuild_entities(self) -> None:
-        """Rebuild entity clusters from current edges using Union-Find."""
+        """
+        Rebuild entity clusters from current edges using Union-Find.
+
+        v6: Uses stable entity IDs - preserves IDs when wallets overlap with
+        existing entities. Only generates new IDs for truly new entities.
+        """
         now = datetime.now()
 
         # Collect edges above threshold (with decay applied)
@@ -506,31 +582,69 @@ class EntityEngine:
         for w in wallets_in_graph:
             components[uf.find(w)].append(w)
 
-        # Clear old entities
-        self.entities.clear()
+        # v6: Snapshot old wallet->entity mapping BEFORE clearing
+        old_wallet_to_entity = dict(self.wallet_to_entity)
+        old_entities = dict(self.entities)
+
+        # Clear wallet mappings but keep entity metadata
         self.wallet_to_entity.clear()
 
-        # Create new entities
+        # Determine entity IDs for each component (v6 stable IDs)
+        comp_to_entity_id: Dict[str, str] = {}
+
         for root, wallets in components.items():
             if len(wallets) < 2:
                 continue
 
-            entity_id = Entity.generate_id(wallets)
+            # Count how many wallets in this component belong to existing entities
+            entity_counts: Dict[str, int] = {}
+            for w in wallets:
+                old_eid = old_wallet_to_entity.get(w)
+                if old_eid:
+                    entity_counts[old_eid] = entity_counts.get(old_eid, 0) + 1
+
+            if entity_counts:
+                # Pick entity with most overlap (stable ID reuse)
+                best_eid = sorted(
+                    entity_counts.items(),
+                    key=lambda kv: (-kv[1], kv[0])  # Most overlap, then alphabetical
+                )[0][0]
+                comp_to_entity_id[root] = best_eid
+            else:
+                # New entity - generate sequential ID
+                comp_to_entity_id[root] = self._next_entity_id()
+
+        # Create/update entities
+        new_entities: Dict[str, Entity] = {}
+
+        for root, wallets in components.items():
+            if len(wallets) < 2:
+                continue
+
+            entity_id = comp_to_entity_id[root]
             confidence = min(0.50 + 0.10 * (len(wallets) - 2), 0.95)
+
+            # Preserve created_at if entity existed
+            created_at = now
+            if entity_id in old_entities:
+                created_at = old_entities[entity_id].created_at
 
             entity = Entity(
                 entity_id=entity_id,
                 wallets=set(wallets),
                 confidence=confidence,
-                reason=f"graph_cc: {len(wallets)} wallets, threshold={self.entity_edge_threshold}",
+                reason=f"graph_cc_stable: {len(wallets)} wallets, threshold={self.entity_edge_threshold}",
+                created_at=created_at,
                 updated_at=now,
             )
 
-            self.entities[entity_id] = entity
+            new_entities[entity_id] = entity
             for w in wallets:
                 self.wallet_to_entity[w] = entity_id
 
-        logger.debug(f"Rebuilt {len(self.entities)} entities from {len(valid_edges)} edges")
+        self.entities = new_entities
+
+        logger.debug(f"Rebuilt {len(self.entities)} entities from {len(valid_edges)} edges (stable IDs)")
 
     def get_entity_for_wallet(self, wallet: str) -> Optional[Entity]:
         """Get the entity containing this wallet, if any."""
