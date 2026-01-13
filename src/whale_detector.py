@@ -18,13 +18,20 @@ NEW DETECTORS (January 2026 - inspired by Polymaster, PredictOS, PolyTrack):
 10. Contrarian activity (betting against consensus) - CONTRARIAN
 11. Cluster detection (related wallets same market/time) - CLUSTER_ACTIVITY
 
+ADVANCED FEATURES (January 2026 - from ChatGPT pm_whale_tracker_v5):
+12. Entity detection - Multiple wallets controlled by same entity - ENTITY_ACTIVITY
+13. Impact ratio - Trade size relative to market volume - HIGH_IMPACT
+14. Fresh wallet detection - On-chain nonce analysis - FRESH_WALLET
+
 Key Features:
 - Non-sports market filtering for political/crypto prediction markets
 - Granular severity scoring (1-10) plus categorical (LOW/MEDIUM/HIGH)
 - Win rate tracking for smart money identification
 - Historical performance tracking per wallet
 - Velocity-based detection (trades per hour/day)
-- Cluster analysis for detecting coordinated trading
+- Entity clustering with Union-Find algorithm
+- Impact ratio calculation (trade_cash / market_volume)
+- On-chain wallet freshness scoring
 
 These are the signals you'll send to subscribers!
 """
@@ -347,6 +354,19 @@ class WhaleDetector:
         # Structure: frozenset of wallet addresses -> cluster metadata
         self.wallet_clusters: Dict[frozenset, Dict] = {}
 
+        # NEW: Market volume tracking for impact ratio calculation
+        # Structure: market_id -> {"volume": float, "last_updated": datetime}
+        self.market_hourly_volume: Dict[str, Dict] = {}
+
+        # NEW: Impact ratio threshold (trade as % of market volume)
+        self.impact_ratio_threshold = 0.08  # 8% of hourly volume
+
+        # NEW: Entity engine integration (lazy loaded)
+        self._entity_engine = None
+
+        # NEW: On-chain freshness threshold
+        self.fresh_wallet_nonce_threshold = 10  # Wallets with nonce < 10 are "fresh"
+
     def _update_wallet_profile(self, trade: Trade, market_question: str = None) -> WalletProfile:
         """
         Update or create a wallet profile based on a trade.
@@ -548,6 +568,82 @@ class WhaleDetector:
 
         return False, prob
 
+    # ==========================================
+    # NEW: IMPACT RATIO & ENTITY INTEGRATION
+    # ==========================================
+
+    def _update_market_volume(self, trade: Trade):
+        """Track hourly volume per market for impact ratio calculation."""
+        market_id = trade.market_id
+        now = datetime.now()
+        cutoff = now - timedelta(hours=1)
+
+        if market_id not in self.market_hourly_volume:
+            self.market_hourly_volume[market_id] = {
+                "trades": [],
+                "volume": 0.0,
+                "last_updated": now
+            }
+
+        vol_data = self.market_hourly_volume[market_id]
+
+        # Add this trade
+        vol_data["trades"].append((trade.timestamp, trade.amount_usd))
+
+        # Prune old trades and recalculate volume
+        vol_data["trades"] = [(ts, amt) for ts, amt in vol_data["trades"] if ts > cutoff]
+        vol_data["volume"] = sum(amt for _, amt in vol_data["trades"])
+        vol_data["last_updated"] = now
+
+    def _calculate_impact_ratio(self, trade: Trade) -> float:
+        """
+        Calculate impact ratio: trade_cash / market_hourly_volume.
+
+        Higher ratio = trade is more significant relative to market activity.
+        A ratio of 0.10 means this trade is 10% of the last hour's volume.
+        """
+        market_id = trade.market_id
+        vol_data = self.market_hourly_volume.get(market_id)
+
+        if not vol_data or vol_data["volume"] <= 0:
+            return 1.0  # Unknown volume = assume high impact
+
+        return trade.amount_usd / vol_data["volume"]
+
+    def get_entity_engine(self):
+        """Get or create the entity engine for advanced clustering."""
+        if self._entity_engine is None:
+            try:
+                from .entity_engine import EntityEngine
+                self._entity_engine = EntityEngine(
+                    coord_window_seconds=int(self.cluster_time_window.total_seconds()),
+                    entity_rebuild_seconds=60,
+                    entity_edge_threshold=0.75,
+                )
+                logger.info("Entity engine initialized")
+            except ImportError:
+                logger.warning("Entity engine not available")
+                return None
+        return self._entity_engine
+
+    def process_trade_for_entity(self, trade: Trade, funder: Optional[str] = None):
+        """Process trade through entity engine for clustering."""
+        engine = self.get_entity_engine()
+        if engine:
+            engine.on_trade(
+                wallet=trade.trader_address,
+                market_id=trade.market_id,
+                timestamp=trade.timestamp,
+                funder=funder,
+            )
+
+    def get_entity_for_wallet(self, wallet: str):
+        """Get the entity containing this wallet, if any."""
+        engine = self.get_entity_engine()
+        if engine:
+            return engine.get_entity_for_wallet(wallet)
+        return None
+
     def _calculate_percentile(self, value: float) -> Optional[float]:
         """
         Calculate what percentile a trade size falls into.
@@ -673,6 +769,12 @@ class WhaleDetector:
 
         # Update cluster tracking
         self._update_cluster_tracking(trade)
+
+        # Update market volume for impact ratio
+        self._update_market_volume(trade)
+
+        # Process through entity engine
+        self.process_trade_for_entity(trade)
 
         # Collect all triggered alerts
         alerts: List[WhaleAlert] = []
@@ -888,6 +990,42 @@ class WhaleDetector:
                 is_sports_market=is_sports,
             ))
 
+        # ==========================================
+        # ADVANCED DETECTORS (from ChatGPT v5)
+        # ==========================================
+
+        # 13. High Impact Trade Detection
+        impact_ratio = self._calculate_impact_ratio(trade)
+        if impact_ratio >= self.impact_ratio_threshold and trade.amount_usd >= 1000:
+            severity_score = 8 if impact_ratio >= 0.15 else 7
+            alerts.append(WhaleAlert(
+                id=f"impact_{trade.id}",
+                alert_type="HIGH_IMPACT",
+                severity=score_to_severity(severity_score),
+                severity_score=severity_score,
+                trade=trade,
+                wallet_profile=profile,
+                message=f"💥 HIGH IMPACT: ${trade.amount_usd:,.0f} is {impact_ratio:.0%} of market's hourly volume",
+                market_question=market_question,
+                is_sports_market=is_sports,
+            ))
+
+        # 14. Entity Activity Detection (multi-wallet entity trading)
+        entity = self.get_entity_for_wallet(trade.trader_address)
+        if entity and entity.wallet_count >= 2 and trade.amount_usd >= 1000:
+            severity_score = 9  # Entity activity is very interesting
+            alerts.append(WhaleAlert(
+                id=f"entity_{trade.id}",
+                alert_type="ENTITY_ACTIVITY",
+                severity="HIGH",
+                severity_score=severity_score,
+                trade=trade,
+                wallet_profile=profile,
+                message=f"👥 ENTITY DETECTED: Wallet is part of {entity.wallet_count}-wallet entity (conf: {entity.confidence:.0%})",
+                market_question=market_question,
+                is_sports_market=is_sports,
+            ))
+
         return alerts
     
     async def analyze_trades(self, trades: List[Trade], market_questions: Dict[str, str] = None) -> List[WhaleAlert]:
@@ -1013,7 +1151,7 @@ class WhaleDetector:
 
     def get_detection_stats(self) -> Dict:
         """Get statistics about all detection types."""
-        return {
+        stats = {
             "total_wallets_tracked": len(self.wallet_profiles),
             "total_trades_analyzed": sum(w.total_trades for w in self.wallet_profiles.values()),
             "whale_wallets": len([w for w in self.wallet_profiles.values() if w.is_whale]),
@@ -1025,6 +1163,35 @@ class WhaleDetector:
             "detected_clusters": len(self.wallet_clusters),
             "markets_tracked": len(self.market_stats),
         }
+
+        # Add entity engine stats if available
+        engine = self.get_entity_engine()
+        if engine:
+            entity_stats = engine.get_entity_stats()
+            stats["entities_detected"] = entity_stats.get("total_entities", 0)
+            stats["wallets_in_entities"] = entity_stats.get("wallets_in_entities", 0)
+            stats["entity_edges"] = entity_stats.get("total_edges", 0)
+
+        return stats
+
+    def get_all_entities(self) -> List[Dict]:
+        """Get all detected entities with their details."""
+        engine = self.get_entity_engine()
+        if not engine:
+            return []
+
+        entities = engine.get_all_entities()
+        return [
+            {
+                "entity_id": e.entity_id,
+                "wallet_count": e.wallet_count,
+                "wallets": list(e.wallets)[:10],  # Limit for response size
+                "confidence": e.confidence,
+                "reason": e.reason,
+                "created_at": e.created_at.isoformat(),
+            }
+            for e in entities
+        ]
 
 
 # =========================================

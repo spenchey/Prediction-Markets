@@ -710,7 +710,7 @@ async def get_alert_types():
     """
     Get counts of alerts by type.
 
-    Shows distribution of all 11 detection types.
+    Shows distribution of all 14 detection types.
     """
     type_counts = {}
     for alert in recent_alerts:
@@ -720,11 +720,75 @@ async def get_alert_types():
         "total_alerts": len(recent_alerts),
         "by_type": type_counts,
         "available_types": [
+            # Original
             "WHALE_TRADE", "UNUSUAL_SIZE", "MARKET_ANOMALY",
             "NEW_WALLET", "FOCUSED_WALLET", "SMART_MONEY",
+            # New (January 2026)
             "REPEAT_ACTOR", "HEAVY_ACTOR", "EXTREME_CONFIDENCE",
-            "WHALE_EXIT", "CONTRARIAN", "CLUSTER_ACTIVITY"
+            "WHALE_EXIT", "CONTRARIAN", "CLUSTER_ACTIVITY",
+            # Advanced (from ChatGPT v5)
+            "HIGH_IMPACT", "ENTITY_ACTIVITY"
         ]
+    }
+
+
+# =========================================
+# ENTITY ENDPOINTS (Advanced Clustering)
+# =========================================
+
+@app.get("/stats/entities")
+async def get_entity_stats():
+    """
+    Get detected entities (multi-wallet clusters).
+
+    Entities are groups of wallets that appear to be controlled
+    by the same person/group, detected via:
+    - Shared funder wallet
+    - Time-coupled trading (same market, close timing)
+    - Market overlap (similar trading patterns)
+    """
+    if not detector:
+        return {"entities": [], "stats": {}}
+
+    entities = detector.get_all_entities()
+    engine = detector.get_entity_engine()
+    engine_stats = engine.get_entity_stats() if engine else {}
+
+    return {
+        "total_entities": len(entities),
+        "entities": entities[:50],  # Limit response size
+        "stats": engine_stats,
+    }
+
+
+@app.get("/entity/{wallet_address}")
+async def get_wallet_entity(wallet_address: str):
+    """
+    Get the entity containing a specific wallet.
+
+    Returns entity details if the wallet is part of a detected cluster.
+    """
+    if not detector:
+        return {"entity": None, "message": "Detector not initialized"}
+
+    entity = detector.get_entity_for_wallet(wallet_address)
+
+    if not entity:
+        return {
+            "wallet": wallet_address,
+            "entity": None,
+            "message": "Wallet not part of any detected entity"
+        }
+
+    return {
+        "wallet": wallet_address,
+        "entity": {
+            "entity_id": entity.entity_id,
+            "wallet_count": entity.wallet_count,
+            "wallets": list(entity.wallets),
+            "confidence": entity.confidence,
+            "reason": entity.reason,
+        }
     }
 
 
