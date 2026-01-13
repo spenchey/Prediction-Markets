@@ -578,9 +578,9 @@ async def get_wallet_stats(limit: int = Query(20, ge=1, le=100)):
     """
     if not detector:
         return {"wallets": []}
-    
+
     wallets = detector.get_top_wallets(limit)
-    
+
     return {
         "total_wallets": len(detector.wallet_profiles),
         "wallets": [
@@ -592,9 +592,138 @@ async def get_wallet_stats(limit: int = Query(20, ge=1, le=100)):
                 "last_seen": w.last_seen.isoformat() if w.last_seen else None,
                 "is_whale": w.is_whale,
                 "is_new": w.is_new_wallet,
-                "markets_traded": len(w.markets_traded)
+                "is_repeat_actor": w.is_repeat_actor,
+                "is_heavy_actor": w.is_heavy_actor,
+                "is_focused": w.is_focused,
+                "markets_traded": len(w.markets_traded),
+                "trades_last_hour": w.trades_last_hour,
+                "trades_last_24h": w.trades_last_24h,
             }
             for w in wallets
+        ]
+    }
+
+
+# =========================================
+# ENHANCED DETECTION ENDPOINTS (v2.0)
+# =========================================
+
+@app.get("/stats/detection")
+async def get_detection_stats():
+    """
+    Get comprehensive detection statistics.
+
+    Shows counts for all 11 detection types:
+    - Original: WHALE_TRADE, UNUSUAL_SIZE, MARKET_ANOMALY, NEW_WALLET, FOCUSED_WALLET, SMART_MONEY
+    - New: REPEAT_ACTOR, HEAVY_ACTOR, EXTREME_CONFIDENCE, WHALE_EXIT, CONTRARIAN, CLUSTER_ACTIVITY
+    """
+    if not detector:
+        return {"error": "Detector not initialized"}
+
+    return detector.get_detection_stats()
+
+
+@app.get("/stats/velocity")
+async def get_velocity_stats(limit: int = Query(20, ge=1, le=100)):
+    """
+    Get wallets with high trading velocity (repeat actors and heavy actors).
+
+    - Repeat Actors: 2+ trades in last hour
+    - Heavy Actors: 5+ trades in last 24 hours
+    """
+    if not detector:
+        return {"repeat_actors": [], "heavy_actors": []}
+
+    repeat_actors = detector.get_repeat_actors(limit)
+    heavy_actors = detector.get_heavy_actors(limit)
+
+    return {
+        "repeat_actors": [
+            {
+                "address": w.address,
+                "trades_last_hour": w.trades_last_hour,
+                "trades_last_24h": w.trades_last_24h,
+                "total_volume_usd": w.total_volume_usd,
+            }
+            for w in repeat_actors
+        ],
+        "heavy_actors": [
+            {
+                "address": w.address,
+                "trades_last_hour": w.trades_last_hour,
+                "trades_last_24h": w.trades_last_24h,
+                "total_volume_usd": w.total_volume_usd,
+            }
+            for w in heavy_actors
+        ]
+    }
+
+
+@app.get("/stats/clusters")
+async def get_cluster_stats(min_volume: float = Query(10000, ge=0)):
+    """
+    Get detected wallet clusters (potentially coordinated trading).
+
+    Clusters are groups of wallets that trade the same markets
+    within short time windows with similar trade sizes.
+    """
+    if not detector:
+        return {"clusters": []}
+
+    clusters = detector.get_active_clusters(min_volume=min_volume)
+
+    return {
+        "total_clusters": len(clusters),
+        "clusters": clusters[:20]  # Limit response size
+    }
+
+
+@app.get("/stats/exits")
+async def get_whale_exits(hours: int = Query(24, ge=1, le=168)):
+    """
+    Get wallets that are exiting positions (selling).
+
+    Tracks whales who are unwinding their positions.
+    """
+    if not detector:
+        return {"exits": []}
+
+    exits = detector.get_whale_exits(since_hours=hours)
+
+    return {
+        "timeframe_hours": hours,
+        "exiting_wallets": [
+            {
+                "address": w.address,
+                "sell_volume_usd": w.sell_volume_usd,
+                "buy_volume_usd": w.buy_volume_usd,
+                "sell_ratio": w.sell_ratio,
+                "total_trades": w.total_trades,
+            }
+            for w in exits[:20]
+        ]
+    }
+
+
+@app.get("/alerts/types")
+async def get_alert_types():
+    """
+    Get counts of alerts by type.
+
+    Shows distribution of all 11 detection types.
+    """
+    type_counts = {}
+    for alert in recent_alerts:
+        type_counts[alert.alert_type] = type_counts.get(alert.alert_type, 0) + 1
+
+    return {
+        "total_alerts": len(recent_alerts),
+        "by_type": type_counts,
+        "available_types": [
+            "WHALE_TRADE", "UNUSUAL_SIZE", "MARKET_ANOMALY",
+            "NEW_WALLET", "FOCUSED_WALLET", "SMART_MONEY",
+            "REPEAT_ACTOR", "HEAVY_ACTOR", "EXTREME_CONFIDENCE",
+            "WHALE_EXIT", "CONTRARIAN", "CLUSTER_ACTIVITY"
         ]
     }
 
