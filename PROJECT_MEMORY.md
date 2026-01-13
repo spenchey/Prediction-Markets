@@ -1,7 +1,7 @@
 # Project Memory - Prediction Market Whale Tracker
 
 > This file helps AI assistants understand the project context and continue work from previous sessions.
-> **Last Updated:** January 13, 2026 - **DEPLOYED SUCCESSFULLY TO RAILWAY**
+> **Last Updated:** January 13, 2026 - **LIVE ON RAILWAY WITH DISCORD ALERTS**
 
 ## Project Overview
 
@@ -142,10 +142,58 @@ WEEKLY_DIGEST_DAY=mon
 - [x] **Removed pandas/numpy** from requirements (caused build failures)
 - [x] **DEPLOYED TO RAILWAY** - Using Nixpacks (not Dockerfile) - January 13, 2026
 
-### COMPLETED - Railway Deployment (January 13, 2026)
-**Status:** ✅ **DEPLOYED AND RUNNING**
+### LIVE DEPLOYMENT (January 13, 2026)
+**Status:** ✅ **LIVE AND SENDING DISCORD ALERTS**
 
-**Critical Learning - USE NIXPACKS, NOT DOCKERFILE:**
+**Live URL:** https://web-production-9d2d3.up.railway.app
+
+**Railway Project:** shimmering-kindness
+- Service: web (the app)
+- Service: Postgres (database)
+
+**Configured Alerts:**
+- ✅ Discord webhook connected
+- Whale threshold: $10,000
+- Poll interval: 30 seconds
+
+---
+
+### Railway CLI Setup (for future management)
+
+The project is linked to Railway CLI. To manage:
+
+```bash
+cd "C:\Users\Spencer H\Desktop\Predicition Markets\prediction-market-tracker\prediction-market-tracker"
+
+# View logs
+railway logs
+
+# Check status
+railway status
+
+# Set environment variables
+railway variables --set "KEY=value"
+
+# View all variables
+railway variables
+
+# Deploy manually (usually auto-deploys on git push)
+railway up
+```
+
+**Project IDs (for CLI linking):**
+- Project: `5c4be819-17ea-4113-b986-8462c2f7454a`
+- Environment: `ffd50b3e-b07a-436a-b0b7-be3bfad2760d`
+- Web Service: `ee7eafaf-33fe-4566-8109-ca6e719cbc34`
+
+To re-link if needed:
+```bash
+railway link --project 5c4be819-17ea-4113-b986-8462c2f7454a --environment ffd50b3e-b07a-436a-b0b7-be3bfad2760d --service ee7eafaf-33fe-4566-8109-ca6e719cbc34
+```
+
+---
+
+### Critical Learning - USE NIXPACKS, NOT DOCKERFILE:
 After many failed attempts with Dockerfile-based deployment, the solution was simple:
 1. **Rename/remove Dockerfile** → `Dockerfile.bak`
 2. **Let Railway use Nixpacks** (its default builder)
@@ -178,14 +226,22 @@ healthcheckTimeout = 60
 - `requirements.txt` - Dependencies (NO pandas/numpy)
 - `Dockerfile.bak` - Backed up, not used
 
-**Environment Variables (set in Railway dashboard):**
-- `DATABASE_URL` = (auto-set by PostgreSQL addon)
-- `WHALE_THRESHOLD_USDC` = 10000
-- `POLL_INTERVAL` = 30
-- `LOG_LEVEL` = INFO
-- `RESEND_API_KEY` = (if using email alerts)
-- `DISCORD_WEBHOOK_URL` = (if using Discord)
-- `ALERT_EMAIL` = your@email.com
+**Environment Variables (configured via Railway CLI):**
+| Variable | Status |
+|----------|--------|
+| `DATABASE_URL` | ✅ Connected to Railway Postgres |
+| `DISCORD_WEBHOOK_URL` | ✅ Configured |
+| `WHALE_THRESHOLD_USDC` | ✅ Set to 10000 |
+| `POLL_INTERVAL` | ✅ Set to 30 |
+| `LOG_LEVEL` | ✅ Set to INFO |
+| `RESEND_API_KEY` | ❌ Not configured (email alerts disabled) |
+| `TELEGRAM_BOT_TOKEN` | ❌ Not configured |
+| `SLACK_WEBHOOK_URL` | ❌ Not configured |
+
+To add more notification channels, use:
+```bash
+railway variables --set "RESEND_API_KEY=re_xxxxx" --set "ALERT_EMAIL=you@email.com"
+```
 
 ### Future Work
 - [ ] Win rate tracking (needs market resolution data)
@@ -251,6 +307,16 @@ def get_async_database_url(url: str) -> str:
 
 **IMPORTANT:** Do NOT rename `Dockerfile.bak` back to `Dockerfile`. Railway's Dockerfile handling caused healthcheck failures. Nixpacks works correctly.
 
+### GOTCHA: main.py Was Stripped During Debugging
+
+During deployment debugging, `src/main.py` was replaced with an ultra-minimal version (just health endpoint). The full version was restored from git commit `266a97c`:
+
+```bash
+git checkout 266a97c -- src/main.py
+```
+
+If the app shows "minimal version running" or alerts aren't working, check that main.py has the full whale detection code (should be ~400+ lines, not ~25 lines).
+
 ---
 
 ## How to Continue Development
@@ -293,6 +359,10 @@ When working on this project:
 3. **Test with real Polymarket data** - APIs are public, no auth needed
 4. **Don't commit API keys** - Use .env file
 5. **Keep subscriptions.py updated** - It defines business logic
+6. **Railway CLI is linked** - Use `railway variables`, `railway logs`, etc.
+7. **NEVER use Dockerfile** - Nixpacks works, Dockerfile doesn't on Railway
+8. **Check main.py size** - If it's tiny (~25 lines), restore full version from git
+9. **Discord alerts are live** - Changes to alerter.py will affect production immediately
 
 ## Contact
 
