@@ -44,10 +44,13 @@ prediction-market-tracker/
 │   ├── database.py          # SQLAlchemy models and DB operations
 │   ├── polymarket_client.py # Polymarket API client
 │   ├── kalshi_client.py     # Kalshi API client (partial)
-│   ├── whale_detector.py    # Core detection logic (ENHANCED)
+│   ├── whale_detector.py    # Core detection logic (14 alert types)
 │   ├── alerter.py           # Multi-channel notifications
-│   ├── scheduler.py         # Email digest scheduling (NEW)
-│   └── subscriptions.py     # Subscription management (NEW)
+│   ├── scheduler.py         # Email digest scheduling
+│   ├── subscriptions.py     # Subscription management
+│   ├── entity_engine.py     # Union-Find wallet clustering (NEW - ChatGPT v5)
+│   ├── wallet_profiler.py   # On-chain wallet profiling (NEW - ChatGPT v5)
+│   └── websocket_client.py  # WebSocket real-time client
 ├── dashboard/               # React/Next.js frontend
 │   └── src/
 │       ├── app/            # Next.js pages
@@ -59,7 +62,7 @@ prediction-market-tracker/
 
 ## Key Features
 
-### Alert Types (12 total - Enhanced January 2026)
+### Alert Types (14 total - Enhanced January 2026)
 
 **ORIGINAL DETECTORS (6):**
 1. **WHALE_TRADE** - Trades >= $10,000 (configurable)
@@ -69,13 +72,17 @@ prediction-market-tracker/
 5. **FOCUSED_WALLET** - Wallets concentrated in few markets
 6. **SMART_MONEY** - Wallets with >60% historical win rate
 
-**NEW DETECTORS (6) - Inspired by Polymaster, PredictOS, PolyTrack:**
+**VELOCITY DETECTORS (6) - Inspired by Polymaster, PredictOS, PolyTrack:**
 7. **REPEAT_ACTOR** - Wallets with 2+ trades in last hour (velocity detection)
 8. **HEAVY_ACTOR** - Wallets with 5+ trades in last 24 hours
 9. **EXTREME_CONFIDENCE** - Bets on >95% or <5% probability outcomes
 10. **WHALE_EXIT** - Tracking when whales sell/unwind positions
 11. **CONTRARIAN** - Large bets against market consensus (<15% probability)
 12. **CLUSTER_ACTIVITY** - Coordinated wallet detection (same market, similar timing)
+
+**ADVANCED ENTITY DETECTORS (2) - ChatGPT v5 Integration:**
+13. **HIGH_IMPACT** - Trade volume >= 8% of market's hourly volume
+14. **ENTITY_ACTIVITY** - Wallet belongs to detected multi-wallet entity
 
 ### Severity System
 - **Categorical:** LOW, MEDIUM, HIGH (for display)
@@ -112,10 +119,12 @@ Markets are classified as sports/non-sports using keyword detection. Sports mark
 | `GET /alerts/types` | Alert counts by type |
 | `GET /stats` | Overall statistics |
 | `GET /stats/wallets` | Wallet leaderboard (with velocity flags) |
-| `GET /stats/detection` | All 12 detection type counts |
+| `GET /stats/detection` | All 14 detection type counts |
 | `GET /stats/velocity` | Repeat actors & heavy actors |
 | `GET /stats/clusters` | Detected wallet clusters |
 | `GET /stats/exits` | Whales exiting positions |
+| `GET /stats/entities` | All detected multi-wallet entities (NEW) |
+| `GET /entity/{wallet}` | Entity membership for a wallet (NEW) |
 | `POST /scan` | Manual scan trigger |
 
 ## Configuration (.env)
@@ -272,6 +281,35 @@ New features:
 - [x] Contrarian detection (bets against consensus)
 - [x] Basic cluster detection (coordinated wallets)
 - [x] WebSocket client module (src/websocket_client.py)
+
+### Entity Clustering System (January 13, 2026 - ChatGPT v5)
+Integrated advanced entity clustering from ChatGPT's pm_whale_tracker_v5:
+
+**New Files:**
+- `src/entity_engine.py` - Union-Find clustering with edge decay
+- `src/wallet_profiler.py` - On-chain wallet profiling
+
+**Entity Detection Features:**
+- **Union-Find clustering** - Groups related wallets into entities
+- **Edge signals with decay:**
+  - `shared_funder` (0.90 weight) - Wallets funded from same source
+  - `time_coupled` (0.18 weight) - Wallets trading same market within 5 min
+  - `market_overlap` (0.40 weight) - Wallets trading similar markets (Jaccard similarity)
+- **Edge decay** - Half-life of 86400 seconds (connections fade over time)
+- **Saturation** - Diminishing returns per signal type (factor 0.55)
+- **Impact ratio** - Trade cash / market hourly volume
+
+**New API Endpoints:**
+| Endpoint | Description |
+|----------|-------------|
+| `GET /stats/entities` | All detected entities with wallet counts |
+| `GET /entity/{wallet}` | Get entity membership for a wallet |
+
+**Environment Variables (optional, for wallet profiling):**
+```bash
+POLYGON_RPC_URL=https://polygon-rpc.com
+POLYGONSCAN_API_KEY=your_key_here
+```
 
 ### Future Work
 - [ ] Win rate tracking (needs market resolution data)
