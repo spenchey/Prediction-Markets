@@ -1,19 +1,17 @@
 # Railway Configuration for Prediction Market Tracker
-# Simplified - let Dockerfile handle everything
+# Using Nixpacks (Railway's default) instead of Dockerfile
 
 [build]
-builder = "dockerfile"
-dockerfilePath = "Dockerfile"
+# Let Railway auto-detect (Nixpacks)
 
 [deploy]
-# Start command - explicitly tell Railway how to run the app
+# Start command
 startCommand = "uvicorn src.main:app --host 0.0.0.0 --port $PORT"
 
 # Health check
 healthcheckPath = "/health"
 healthcheckTimeout = 60
 
-# More retries
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
 
