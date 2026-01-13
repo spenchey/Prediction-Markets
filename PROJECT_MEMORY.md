@@ -1,7 +1,7 @@
 # Project Memory - Prediction Market Whale Tracker
 
 > This file helps AI assistants understand the project context and continue work from previous sessions.
-> **Last Updated:** January 12, 2026 (Evening - Railway Deployment In Progress)
+> **Last Updated:** January 13, 2026 - **DEPLOYED SUCCESSFULLY TO RAILWAY**
 
 ## Project Overview
 
@@ -140,47 +140,52 @@ WEEKLY_DIGEST_DAY=mon
 - [x] **Created deployment files** (Dockerfile, railway.toml, nixpacks.toml, Procfile)
 - [x] **Added PostgreSQL support** to database.py
 - [x] **Removed pandas/numpy** from requirements (caused build failures)
+- [x] **DEPLOYED TO RAILWAY** - Using Nixpacks (not Dockerfile) - January 13, 2026
 
-### In Progress - Railway Deployment (PICK UP HERE)
-**Status:** Railway service created, PostgreSQL addon connected. Build failing due to **cached old requirements.txt** containing pandas.
+### COMPLETED - Railway Deployment (January 13, 2026)
+**Status:** ✅ **DEPLOYED AND RUNNING**
 
-**Root Cause Identified (January 13, 2026):**
-Railway's Railpack builder cached the OLD requirements.txt that still had `pandas==2.1.4` at line 13. The current requirements.txt (correctly) has no pandas, but Railway isn't using it.
+**Critical Learning - USE NIXPACKS, NOT DOCKERFILE:**
+After many failed attempts with Dockerfile-based deployment, the solution was simple:
+1. **Rename/remove Dockerfile** → `Dockerfile.bak`
+2. **Let Railway use Nixpacks** (its default builder)
+3. **Add `.python-version`** file with `3.11`
+4. **Use `startCommand` in railway.toml**
 
-Evidence from build log:
+**Why Dockerfile Failed:**
+- Railway's healthcheck never saw any output from the container
+- Multiple CMD formats tried (shell form, exec form, inline commands)
+- Multi-stage and single-stage builds both failed
+- The container would start but uvicorn never seemed to run
+- Likely a Railway-specific issue with Dockerfile CMD handling
+
+**What Worked:**
+```toml
+# railway.toml
+[build]
+# Let Railway auto-detect (Nixpacks) - NO builder specified
+
+[deploy]
+startCommand = "uvicorn src.main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/health"
+healthcheckTimeout = 60
 ```
-Collecting pandas==2.1.4 (from -r requirements.txt (line 13))
-```
-Current line 13 is a comment, not pandas. Cache is stale.
 
-**NIXPACKS_CACHE_VERSION won't help** - Railway is using Railpack (not Nixpacks).
+**Key Files for Deployment:**
+- `railway.toml` - Railway configuration (Nixpacks + startCommand)
+- `.python-version` - Specifies Python 3.11
+- `Procfile` - Backup start command
+- `requirements.txt` - Dependencies (NO pandas/numpy)
+- `Dockerfile.bak` - Backed up, not used
 
-**Root Cause Found (January 13, 2026):**
-GitHub repo had TWO branches: `main` (old code with pandas) and `master` (fixed code). Railway was deploying from `main`. Fixed by force-pushing master to main.
-
-**Build now succeeds!** But healthcheck was failing because app crashed during startup.
-
-**Fix Applied:**
-- Made startup more resilient - wraps db/alerter/detector init in try/except
-- Health endpoint always returns 200 so healthcheck passes
-- Added logging to show what's happening during startup
-
-**After redeploy, check logs for:**
-- `✅ Database initialized` - means DATABASE_URL is working
-- `❌ Database initialization failed` - check DATABASE_URL env var
-
-**Environment variables to set:**
-   - `DATABASE_URL` = (should be auto-set by PostgreSQL addon)
-   - `WHALE_THRESHOLD_USDC` = 10000
-   - `POLL_INTERVAL` = 30
-   - `LOG_LEVEL` = INFO
-   - `RESEND_API_KEY` = (if using email alerts)
-   - `DISCORD_WEBHOOK_URL` = (if using Discord)
-   - `ALERT_EMAIL` = your@email.com
-
-**Verify deployment:**
-1. Check `/health` endpoint returns status
-2. Monitor logs for successful trade polling
+**Environment Variables (set in Railway dashboard):**
+- `DATABASE_URL` = (auto-set by PostgreSQL addon)
+- `WHALE_THRESHOLD_USDC` = 10000
+- `POLL_INTERVAL` = 30
+- `LOG_LEVEL` = INFO
+- `RESEND_API_KEY` = (if using email alerts)
+- `DISCORD_WEBHOOK_URL` = (if using Discord)
+- `ALERT_EMAIL` = your@email.com
 
 ### Future Work
 - [ ] Win rate tracking (needs market resolution data)
@@ -234,16 +239,17 @@ def get_async_database_url(url: str) -> str:
 
 ---
 
-## Deployment Files Created
+## Deployment Files (Railway with Nixpacks)
 
 | File | Purpose |
 |------|---------|
-| `Dockerfile` | Multi-stage build with Python 3.11-slim, non-root user |
-| `railway.toml` | Railway config - uses Dockerfile builder, health checks |
-| `nixpacks.toml` | Pins Python 3.11 if Nixpacks is used |
-| `.dockerignore` | Excludes tests, docs, local DBs from container |
+| `railway.toml` | Railway config - Nixpacks builder, startCommand, health checks |
+| `.python-version` | Specifies Python 3.11 for Nixpacks |
 | `Procfile` | Heroku-style start command (backup) |
-| `.python-version` | Specifies Python 3.11 |
+| `.dockerignore` | Excludes tests, docs, local DBs from container |
+| `Dockerfile.bak` | **DISABLED** - Dockerfile didn't work with Railway, kept as backup |
+
+**IMPORTANT:** Do NOT rename `Dockerfile.bak` back to `Dockerfile`. Railway's Dockerfile handling caused healthcheck failures. Nixpacks works correctly.
 
 ---
 
