@@ -6,6 +6,9 @@ builder = "dockerfile"
 dockerfilePath = "Dockerfile"
 
 [deploy]
+# Start command - explicitly tell Railway how to run the app
+startCommand = "uvicorn src.main:app --host 0.0.0.0 --port $PORT"
+
 # Health check
 healthcheckPath = "/health"
 healthcheckTimeout = 60

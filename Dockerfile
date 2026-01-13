@@ -20,8 +20,6 @@ COPY src/ ./src/
 ENV PYTHONUNBUFFERED=1
 
 # Railway sets PORT environment variable
-# Default to 8000 if not set
 EXPOSE 8000
 
-# Run uvicorn - Railway will set $PORT
-CMD ["sh", "-c", "uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# No CMD - Railway uses Procfile instead
