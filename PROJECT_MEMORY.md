@@ -142,24 +142,35 @@ WEEKLY_DIGEST_DAY=mon
 - [x] **Removed pandas/numpy** from requirements (caused build failures)
 
 ### In Progress - Railway Deployment (PICK UP HERE)
-**Status:** Railway service created, PostgreSQL addon connected, but build was failing due to cached old requirements.txt
+**Status:** Railway service created, PostgreSQL addon connected. Build failing due to **cached old requirements.txt** containing pandas.
 
-**What was done:**
-1. Added `NIXPACKS_CACHE_VERSION=2` environment variable to bust cache
-2. Waiting for redeploy to complete
+**Root Cause Identified (January 13, 2026):**
+Railway's Railpack builder cached the OLD requirements.txt that still had `pandas==2.1.4` at line 13. The current requirements.txt (correctly) has no pandas, but Railway isn't using it.
 
-**Next steps when resuming:**
-1. Check Railway dashboard - see if build succeeded after cache bust
-2. If still failing, try "Clear build cache" in Railway Settings
-3. Once build succeeds, set these environment variables in Railway:
+Evidence from build log:
+```
+Collecting pandas==2.1.4 (from -r requirements.txt (line 13))
+```
+Current line 13 is a comment, not pandas. Cache is stale.
+
+**NIXPACKS_CACHE_VERSION won't help** - Railway is using Railpack (not Nixpacks).
+
+**Action Required:**
+1. **Go to Railway dashboard → Service → Settings**
+2. **Click "Clear Build Cache"** (this is critical!)
+3. **Trigger redeploy** (or it may auto-deploy after cache clear)
+
+**After build succeeds, set environment variables:**
    - `WHALE_THRESHOLD_USDC` = 10000
    - `POLL_INTERVAL` = 30
    - `LOG_LEVEL` = INFO
    - `RESEND_API_KEY` = (if using email alerts)
    - `DISCORD_WEBHOOK_URL` = (if using Discord)
    - `ALERT_EMAIL` = your@email.com
-4. Verify `/health` endpoint returns healthy status
-5. Monitor logs for successful trade polling
+
+**Verify deployment:**
+1. Check `/health` endpoint returns healthy status
+2. Monitor logs for successful trade polling
 
 ### Future Work
 - [ ] Win rate tracking (needs market resolution data)
