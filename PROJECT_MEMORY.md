@@ -445,6 +445,63 @@ When working on this project:
 8. **Check main.py size** - If it's tiny (~25 lines), restore full version from git
 9. **Discord alerts are live** - Changes to alerter.py will affect production immediately
 
+## Session Log
+
+### January 13, 2026 - ChatGPT v5 + v6 Integration Session
+
+**What was done:**
+
+1. **Analyzed ChatGPT's pm_whale_tracker_v5.zip**
+   - Extracted and reviewed all Python modules
+   - Identified key features: Union-Find clustering, edge decay, saturation, entity scoring
+
+2. **Created new modules from v5:**
+   - `src/entity_engine.py` (500+ lines) - Full entity clustering engine
+   - `src/wallet_profiler.py` (200+ lines) - On-chain wallet profiling via Polygon RPC
+
+3. **Updated whale_detector.py with 2 new alert types:**
+   - HIGH_IMPACT - Trades >= 8% of market hourly volume
+   - ENTITY_ACTIVITY - Wallet belongs to detected multi-wallet entity
+   - Total alert types: 14
+
+4. **Added API endpoints in main.py:**
+   - `GET /stats/entities` - List all detected entities
+   - `GET /entity/{wallet}` - Get entity for a wallet
+
+5. **Integrated ChatGPT's pm_whale_tracker_v6.zip enhancements:**
+   - Market liquidity scaling (edges weighted by market volume)
+   - Stable entity IDs (sequential, persist across rebuilds)
+   - New parameters for liquidity baseline and scale factors
+
+6. **Deployed to Railway:**
+   - All commits pushed to GitHub master and main branches
+   - Railway auto-deployed successfully
+   - Health endpoint confirmed working
+   - Discord alerts confirmed working
+
+**Commits made:**
+```
+57f15d2 Document v6 entity clustering features
+8542613 Add v6 entity clustering features
+75a330b Update PROJECT_MEMORY with entity clustering documentation
+589fa68 Add entity clustering and impact ratio from ChatGPT v5
+```
+
+**Files modified/created:**
+- `src/entity_engine.py` (NEW)
+- `src/wallet_profiler.py` (NEW)
+- `src/whale_detector.py` (MODIFIED)
+- `src/main.py` (MODIFIED)
+- `PROJECT_MEMORY.md` (MODIFIED)
+
+**Live deployment verified:**
+- URL: https://web-production-9d2d3.up.railway.app
+- Health: ✅ OK
+- Database: ✅ Connected
+- Discord alerts: ✅ Working
+
+---
+
 ## Contact
 
 Project Owner: Spencer H
