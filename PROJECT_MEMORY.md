@@ -282,8 +282,8 @@ New features:
 - [x] Basic cluster detection (coordinated wallets)
 - [x] WebSocket client module (src/websocket_client.py)
 
-### Entity Clustering System (January 13, 2026 - ChatGPT v5)
-Integrated advanced entity clustering from ChatGPT's pm_whale_tracker_v5:
+### Entity Clustering System (January 13, 2026 - ChatGPT v5 + v6)
+Integrated advanced entity clustering from ChatGPT's pm_whale_tracker_v5 and v6:
 
 **New Files:**
 - `src/entity_engine.py` - Union-Find clustering with edge decay
@@ -299,6 +299,15 @@ Integrated advanced entity clustering from ChatGPT's pm_whale_tracker_v5:
 - **Saturation** - Diminishing returns per signal type (factor 0.55)
 - **Impact ratio** - Trade cash / market hourly volume
 
+**v6 Enhancements:**
+- **Market liquidity scaling** - Edge weights scale based on market volume
+  - High-volume markets need more evidence to link wallets
+  - Low-volume markets need less evidence
+  - Scale range: 0.35x to 1.25x (baseline $50k/hour)
+- **Stable entity IDs** - Sequential IDs (ent_000001) that persist across rebuilds
+  - Reuses entity IDs when wallet overlap detected
+  - Better for tracking entities over time
+
 **New API Endpoints:**
 | Endpoint | Description |
 |----------|-------------|
@@ -309,6 +318,9 @@ Integrated advanced entity clustering from ChatGPT's pm_whale_tracker_v5:
 ```bash
 POLYGON_RPC_URL=https://polygon-rpc.com
 POLYGONSCAN_API_KEY=your_key_here
+MARKET_LIQUIDITY_BASELINE=50000
+MARKET_IMPORTANCE_MIN_SCALE=0.35
+MARKET_IMPORTANCE_MAX_SCALE=1.25
 ```
 
 ### Future Work
