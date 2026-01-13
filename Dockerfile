@@ -1,6 +1,6 @@
 # Dockerfile for Prediction Market Tracker
 # Multi-stage build for smaller final image
-# Build version: 2026-01-13-v3 (resilient startup)
+# Build version: 2026-01-13-v4 (ultra minimal)
 
 # ============================================
 # Stage 1: Builder
@@ -8,7 +8,7 @@
 FROM python:3.11-slim as builder
 
 # Cache buster - change this to force rebuild
-ARG CACHE_BUST=2026-01-13-v3
+ARG CACHE_BUST=2026-01-13-v4
 
 WORKDIR /app
 
@@ -45,7 +45,7 @@ COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Force cache invalidation for src copy
-ARG SRC_CACHE_BUST=2026-01-13-v3
+ARG SRC_CACHE_BUST=2026-01-13-v4
 # Copy application code
 COPY src/ ./src/
 COPY run.py .
