@@ -59,13 +59,23 @@ prediction-market-tracker/
 
 ## Key Features
 
-### Alert Types (6 total)
+### Alert Types (12 total - Enhanced January 2026)
+
+**ORIGINAL DETECTORS (6):**
 1. **WHALE_TRADE** - Trades >= $10,000 (configurable)
 2. **UNUSUAL_SIZE** - Statistically abnormal (z-score based)
-3. **MARKET_ANOMALY** - Unusual for specific market (from ChatGPT MVP)
+3. **MARKET_ANOMALY** - Unusual for specific market
 4. **NEW_WALLET** - First-time traders with large bets
-5. **FOCUSED_WALLET** - Wallets concentrated in few markets (from ChatGPT MVP)
+5. **FOCUSED_WALLET** - Wallets concentrated in few markets
 6. **SMART_MONEY** - Wallets with >60% historical win rate
+
+**NEW DETECTORS (6) - Inspired by Polymaster, PredictOS, PolyTrack:**
+7. **REPEAT_ACTOR** - Wallets with 2+ trades in last hour (velocity detection)
+8. **HEAVY_ACTOR** - Wallets with 5+ trades in last 24 hours
+9. **EXTREME_CONFIDENCE** - Bets on >95% or <5% probability outcomes
+10. **WHALE_EXIT** - Tracking when whales sell/unwind positions
+11. **CONTRARIAN** - Large bets against market consensus (<15% probability)
+12. **CLUSTER_ACTIVITY** - Coordinated wallet detection (same market, similar timing)
 
 ### Severity System
 - **Categorical:** LOW, MEDIUM, HIGH (for display)
@@ -92,14 +102,20 @@ Markets are classified as sports/non-sports using keyword detection. Sports mark
 | Endpoint | Description |
 |----------|-------------|
 | `GET /` | Health check |
+| `GET /health` | Railway health check |
 | `GET /markets` | List active markets |
 | `GET /trades` | Recent trades |
 | `GET /trades/whales` | Whale trades only |
 | `GET /trades/wallet/{address}` | Trades by wallet |
 | `GET /alerts` | Recent alerts |
 | `GET /alerts/stream` | SSE real-time alerts |
+| `GET /alerts/types` | Alert counts by type |
 | `GET /stats` | Overall statistics |
-| `GET /stats/wallets` | Wallet leaderboard |
+| `GET /stats/wallets` | Wallet leaderboard (with velocity flags) |
+| `GET /stats/detection` | All 12 detection type counts |
+| `GET /stats/velocity` | Repeat actors & heavy actors |
+| `GET /stats/clusters` | Detected wallet clusters |
+| `GET /stats/exits` | Whales exiting positions |
 | `POST /scan` | Manual scan trigger |
 
 ## Configuration (.env)
@@ -243,15 +259,30 @@ To add more notification channels, use:
 railway variables --set "RESEND_API_KEY=re_xxxxx" --set "ALERT_EMAIL=you@email.com"
 ```
 
+### Enhanced Detection (January 13, 2026)
+Added 6 new detection algorithms inspired by competitors:
+- **Polymaster** (github.com/neur0map/polymaster) - Repeat/heavy actor detection
+- **PredictOS** (github.com/PredictionXBT/PredictOS) - Multi-agent AI, WebSocket
+- **PolyTrack** (polytrackhq.app) - Cluster detection concept
+
+New features:
+- [x] Velocity tracking (trades/hour, trades/day per wallet)
+- [x] Extreme confidence detection (>95% or <5% bets)
+- [x] Exit detection (whale position unwinding)
+- [x] Contrarian detection (bets against consensus)
+- [x] Basic cluster detection (coordinated wallets)
+- [x] WebSocket client module (src/websocket_client.py)
+
 ### Future Work
 - [ ] Win rate tracking (needs market resolution data)
 - [ ] Stripe payment integration
 - [ ] Automated trading module
 - [ ] Mobile app (React Native)
 - [ ] Kalshi integration
-- [ ] WebSocket support for real-time updates
+- [ ] Enable WebSocket mode in production (currently REST polling)
 - [ ] Machine learning for pattern detection
 - [ ] Portfolio management/copy trading
+- [ ] Advanced cluster detection (behavioral similarity)
 
 ---
 
