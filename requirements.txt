@@ -1,6 +1,6 @@
 # Prediction Market Tracker - Dependencies
 # Install with: pip install -r requirements.txt
-# Updated: 2026-01-12 - Removed pandas/numpy, using Python 3.11
+# Updated: 2026-01-13 - Resilient startup, no pandas
 
 # ============================================
 # HTTP & Networking
