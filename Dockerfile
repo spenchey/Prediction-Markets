@@ -1,14 +1,12 @@
 # Dockerfile for Prediction Market Tracker
-# Multi-stage build for smaller final image
-# Build version: 2026-01-13-v4 (ultra minimal)
+# Build version: 2026-01-13-v5 (debug startup)
 
 # ============================================
 # Stage 1: Builder
 # ============================================
 FROM python:3.11-slim as builder
 
-# Cache buster - change this to force rebuild
-ARG CACHE_BUST=2026-01-13-v4
+ARG CACHE_BUST=2026-01-13-v5
 
 WORKDIR /app
 
@@ -45,10 +43,15 @@ COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Force cache invalidation for src copy
-ARG SRC_CACHE_BUST=2026-01-13-v4
+ARG SRC_CACHE_BUST=2026-01-13-v5
+
 # Copy application code
 COPY src/ ./src/
 COPY run.py .
+COPY start.sh .
+
+# Make start script executable
+RUN chmod +x start.sh
 
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash appuser && \
@@ -63,9 +66,8 @@ ENV PYTHONUNBUFFERED=1 \
 # Expose port
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:${PORT}/health || exit 1
+# NO Docker healthcheck - let Railway handle it
+# This prevents double health checks that might cause issues
 
-# Start command
-CMD ["sh", "-c", "uvicorn src.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Start command - use the debug script
+CMD ["/bin/bash", "./start.sh"]
