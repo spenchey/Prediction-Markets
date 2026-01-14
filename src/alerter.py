@@ -45,6 +45,7 @@ class AlertMessage:
     category: str = "Other"  # Politics, Crypto, Sports, Finance, etc.
     market_url: Optional[str] = None  # Link to market page
     trader_url: Optional[str] = None  # Link to trader profile
+    position_action: str = "OPENING"  # OPENING, ADDING, CLOSING - trade intent
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -64,6 +65,7 @@ class AlertMessage:
         market_info = self.market_question or "Unknown Market"
         action = self.side.capitalize() if self.side else "Traded"
         market_link = f"\n🔗 Link: {self.market_url}" if self.market_url else ""
+        action_emoji = {"OPENING": "🆕", "ADDING": "➕", "CLOSING": "🔚"}.get(self.position_action, "")
         return f"""🚨 {self.title}
 
 {self.message}
@@ -72,7 +74,7 @@ class AlertMessage:
 🏷️ Category: {self.category}
 🏦 Platform: {self.platform}
 💰 Amount: ${self.trade_amount:,.2f}
-🎯 Position: {action} {self.outcome}
+🎯 Position: {action} {self.outcome} ({action_emoji} {self.position_action})
 ⚡ Severity: {self.severity}
 👤 Trader: {self.trader_address[:20]}...
 ⏰ Time: {self.timestamp.strftime('%Y-%m-%d %H:%M:%S')}"""
@@ -194,9 +196,15 @@ class DiscordAlert(AlertChannel):
             import httpx
             color = {"LOW": 0x4CAF50, "MEDIUM": 0xFFC107, "HIGH": 0xF44336}.get(alert.severity, 0x9E9E9E)
 
-            # Format action: "Bought Yes" or "Sold No"
+            # Format action with position intent: "Bought Yes (OPENING)" or "Sold No (CLOSING)"
             action = alert.side.capitalize() if alert.side else "Traded"
-            position_text = f"{action} **{alert.outcome}**"
+            # Position action emoji
+            action_emoji = {
+                "OPENING": "🆕",  # New position
+                "ADDING": "➕",   # Adding to existing
+                "CLOSING": "🔚",  # Closing position
+            }.get(alert.position_action, "")
+            position_text = f"{action} **{alert.outcome}**\n{action_emoji} {alert.position_action}"
 
             # Severity with explanation
             severity_emoji = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🔴"}.get(alert.severity, "⚪")
@@ -472,6 +480,7 @@ class Alerter:
             category=mkt_category,
             market_url=mkt_url,
             trader_url=trader_url,
+            position_action=getattr(whale_alert, 'position_action', 'OPENING'),
         )
         
         results = {}

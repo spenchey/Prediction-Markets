@@ -99,7 +99,8 @@ class WalletProfile:
     losing_trades: int = 0
 
     # Enhanced tracking for smart money detection
-    positions: Dict[str, Dict] = field(default_factory=dict)  # market_id -> position details
+    # positions tracks per-market position: {market_id: {outcome: {buy_shares, buy_usd, sell_shares, sell_usd}}}
+    positions: Dict[str, Dict[str, Dict[str, float]]] = field(default_factory=dict)
     resolved_positions: List[Dict] = field(default_factory=list)  # Historical resolved bets
 
     # Track by market type (non-sports vs sports)
@@ -121,6 +122,88 @@ class WalletProfile:
         # Keep only last 100 timestamps
         if len(self.recent_trade_times) > 100:
             self.recent_trade_times = self.recent_trade_times[-100:]
+
+    def update_position(self, market_id: str, outcome: str, side: str, shares: float, amount_usd: float):
+        """Update position for a specific market and outcome."""
+        if market_id not in self.positions:
+            self.positions[market_id] = {}
+        if outcome not in self.positions[market_id]:
+            self.positions[market_id][outcome] = {
+                "buy_shares": 0.0,
+                "buy_usd": 0.0,
+                "sell_shares": 0.0,
+                "sell_usd": 0.0,
+            }
+
+        pos = self.positions[market_id][outcome]
+        if side.lower() == "buy":
+            pos["buy_shares"] += shares
+            pos["buy_usd"] += amount_usd
+        elif side.lower() == "sell":
+            pos["sell_shares"] += shares
+            pos["sell_usd"] += amount_usd
+
+    def get_position(self, market_id: str, outcome: str) -> Dict[str, float]:
+        """Get position info for a specific market and outcome."""
+        if market_id not in self.positions:
+            return {"buy_shares": 0, "buy_usd": 0, "sell_shares": 0, "sell_usd": 0, "net_shares": 0}
+        if outcome not in self.positions[market_id]:
+            return {"buy_shares": 0, "buy_usd": 0, "sell_shares": 0, "sell_usd": 0, "net_shares": 0}
+
+        pos = self.positions[market_id][outcome].copy()
+        pos["net_shares"] = pos["buy_shares"] - pos["sell_shares"]
+        return pos
+
+    def get_position_action(self, market_id: str, outcome: str, side: str) -> str:
+        """
+        Determine if this trade is opening, closing, or adding to a position.
+
+        Returns:
+            - "OPENING": First trade in this market/outcome
+            - "ADDING": Adding to an existing position in same direction
+            - "CLOSING": Reducing/closing an existing position
+            - "REVERSING": Closing position and going opposite direction (rare)
+        """
+        pos = self.get_position(market_id, outcome)
+        net_shares = pos["net_shares"]
+
+        # No existing position
+        if net_shares == 0:
+            return "OPENING"
+
+        # Has a long position (bought more than sold)
+        if net_shares > 0:
+            if side.lower() == "buy":
+                return "ADDING"  # Adding to long
+            else:
+                return "CLOSING"  # Selling to close long
+
+        # Has a short position (sold more than bought)
+        if net_shares < 0:
+            if side.lower() == "sell":
+                return "ADDING"  # Adding to short
+            else:
+                return "CLOSING"  # Buying to close short
+
+        return "OPENING"
+
+    def get_market_pnl(self, market_id: str) -> Dict[str, float]:
+        """Get estimated P&L for a market (unrealized, based on buy/sell prices)."""
+        if market_id not in self.positions:
+            return {"total_invested": 0, "total_received": 0, "realized_pnl": 0}
+
+        total_invested = 0.0
+        total_received = 0.0
+
+        for outcome, pos in self.positions[market_id].items():
+            total_invested += pos.get("buy_usd", 0)
+            total_received += pos.get("sell_usd", 0)
+
+        return {
+            "total_invested": total_invested,
+            "total_received": total_received,
+            "realized_pnl": total_received - total_invested,
+        }
 
     @property
     def trades_last_hour(self) -> int:
@@ -249,6 +332,7 @@ class WhaleAlert:
     z_score: Optional[float] = None  # Statistical significance
     market_url: Optional[str] = None  # Link to market page
     category: str = "Other"  # Politics, Crypto, Sports, Finance, etc.
+    position_action: str = "OPENING"  # OPENING, ADDING, CLOSING - what this trade means for their position
 
     def to_dict(self) -> Dict:
         """Convert to dictionary for JSON/database storage."""
@@ -400,6 +484,15 @@ class WhaleDetector:
         elif trade.side.lower() == "sell":
             profile.total_sells += 1
             profile.sell_volume_usd += trade.amount_usd
+
+        # Track per-market position
+        profile.update_position(
+            market_id=trade.market_id,
+            outcome=trade.outcome,
+            side=trade.side,
+            shares=trade.size,
+            amount_usd=trade.amount_usd
+        )
 
         # Track non-sports separately
         if market_question and not is_sports_market(market_question):
@@ -764,7 +857,17 @@ class WhaleDetector:
         market_url = self.market_urls.get(trade.market_id)
         market_category = self.market_categories.get(trade.market_id, "Other")
 
-        # Update wallet profile (includes velocity tracking)
+        # Detect position action BEFORE updating profile (to know state before this trade)
+        address = trade.trader_address
+        if address in self.wallet_profiles:
+            existing_profile = self.wallet_profiles[address]
+            position_action = existing_profile.get_position_action(
+                trade.market_id, trade.outcome, trade.side
+            )
+        else:
+            position_action = "OPENING"  # New wallet, so definitely opening
+
+        # Update wallet profile (includes velocity tracking and position update)
         profile = self._update_wallet_profile(trade, market_question)
 
         # Track trade size for global statistics
@@ -809,6 +912,7 @@ class WhaleDetector:
                 is_sports_market=is_sports,
                 market_url=market_url,
                 category=market_category,
+                position_action=position_action,
             ))
 
         # 2. Statistically unusual trade (global)
@@ -829,6 +933,7 @@ class WhaleDetector:
                 z_score=z_score,
                 market_url=market_url,
                 category=market_category,
+                position_action=position_action,
             ))
 
         # 3. Market-specific anomaly (from ChatGPT MVP)
@@ -849,6 +954,7 @@ class WhaleDetector:
                     z_score=market_z,
                     market_url=market_url,
                     category=market_category,
+                    position_action=position_action,
                 ))
 
         # 4. New wallet making significant trade
@@ -866,6 +972,7 @@ class WhaleDetector:
                 is_sports_market=is_sports,
                 market_url=market_url,
                 category=market_category,
+                position_action=position_action,
             ))
 
         # 5. Focused wallet making big trade (from ChatGPT MVP)
@@ -883,6 +990,7 @@ class WhaleDetector:
                 is_sports_market=is_sports,
                 market_url=market_url,
                 category=market_category,
+                position_action=position_action,
             ))
 
         # 6. Smart money (high win-rate wallet) making a trade
@@ -900,6 +1008,7 @@ class WhaleDetector:
                 is_sports_market=is_sports,
                 market_url=market_url,
                 category=market_category,
+                position_action=position_action,
             ))
 
         # ==========================================
@@ -921,6 +1030,7 @@ class WhaleDetector:
                 is_sports_market=is_sports,
                 market_url=market_url,
                 category=market_category,
+                position_action=position_action,
             ))
 
         # 8. Heavy Actor Detection (5+ trades in 24 hours)
@@ -938,6 +1048,7 @@ class WhaleDetector:
                 is_sports_market=is_sports,
                 market_url=market_url,
                 category=market_category,
+                position_action=position_action,
             ))
 
         # 9. Extreme Confidence Detection (>95% or <5% probability bets)
@@ -965,6 +1076,7 @@ class WhaleDetector:
                 is_sports_market=is_sports,
                 market_url=market_url,
                 category=market_category,
+                position_action=position_action,
             ))
 
         # 10. Whale Exit Detection (large sells)
@@ -984,6 +1096,7 @@ class WhaleDetector:
                     is_sports_market=is_sports,
                     market_url=market_url,
                     category=market_category,
+                    position_action=position_action,
                 ))
 
         # 11. Contrarian Activity Detection (betting against consensus)
@@ -1002,6 +1115,7 @@ class WhaleDetector:
                 is_sports_market=is_sports,
                 market_url=market_url,
                 category=market_category,
+                position_action=position_action,
             ))
 
         # 12. Cluster Activity Detection (coordinated wallets)
@@ -1020,6 +1134,7 @@ class WhaleDetector:
                 is_sports_market=is_sports,
                 market_url=market_url,
                 category=market_category,
+                position_action=position_action,
             ))
 
         # ==========================================
@@ -1042,6 +1157,7 @@ class WhaleDetector:
                 is_sports_market=is_sports,
                 market_url=market_url,
                 category=market_category,
+                position_action=position_action,
             ))
 
         # 14. Entity Activity Detection (multi-wallet entity trading)
@@ -1060,6 +1176,7 @@ class WhaleDetector:
                 is_sports_market=is_sports,
                 market_url=market_url,
                 category=market_category,
+                position_action=position_action,
             ))
 
         return alerts
