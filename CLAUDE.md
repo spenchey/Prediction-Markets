@@ -251,6 +251,7 @@ The test script auto-detects forum channels and retries with `thread_name` if ne
 ### Commits
 - `700704c` - Add Discord forum channel support
 - `70e8367` - Fix Discord forum channel: thread_id as query param
+- `1d2e2eb` - Improve alert quality and clarity
 
 ### Result
 Alerts now posting successfully to Discord:
@@ -258,3 +259,35 @@ Alerts now posting successfully to Discord:
 🎮 Discord alert sent
 📢 Alert sent to 2/2 channels
 ```
+
+---
+
+### Issue: Alert Quality Improvements (Same Session)
+
+**Problems reported:**
+1. No platform identification (Polymarket vs Kalshi vs PredictIt)
+2. Market question not always shown (just saw "Down" outcome with no context)
+3. Severity meaning unclear (what does HIGH mean?)
+
+**Solution:**
+Updated `alerter.py` and `polymarket_client.py`:
+
+1. **Added `platform` field** to Trade dataclass (defaults to "Polymarket")
+2. **Market question always shown** - Falls back to market ID if unavailable
+3. **Position instead of Outcome** - Shows "Buy No" or "Sold Yes" instead of just "No"
+4. **Severity explanation** - HIGH/MEDIUM/LOW now include descriptions
+
+**New Alert Format:**
+```
+📊 Market: Will Elon Musk post 440-459 tweets...?
+🏦 Platform: Polymarket
+💰 Amount: $1,150.66
+🎯 Position: Buy No
+⚡ Severity: HIGH (Large trade size, unusual pattern, or high-confidence signal)
+👤 Trader: 0x1234...
+```
+
+**Severity Meanings:**
+- **HIGH** - Large trade size, unusual pattern, or high-confidence signal
+- **MEDIUM** - Notable activity worth monitoring
+- **LOW** - Minor signal, may be noise
