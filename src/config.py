@@ -91,6 +91,10 @@ class Settings(BaseSettings):
     # ============================================
     # Create webhook in Server Settings → Integrations
     DISCORD_WEBHOOK_URL: Optional[str] = None
+    # For forum channels: post to existing thread (recommended)
+    DISCORD_THREAD_ID: Optional[str] = None
+    # For forum channels: create new thread with this name (creates many threads)
+    DISCORD_THREAD_NAME: Optional[str] = None
 
     # ============================================
     # SLACK NOTIFICATIONS

@@ -148,19 +148,28 @@ class EmailAlert(AlertChannel):
 
 class DiscordAlert(AlertChannel):
     """
-    Discord webhook
-    
+    Discord webhook (supports both regular channels and forum channels)
+
     Setup:
     1. Right-click channel → Edit Channel → Integrations → Webhooks
     2. Create webhook, copy URL
     3. Add to .env: DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+
+    For Forum Channels (optional):
+    - DISCORD_THREAD_ID: Post to an existing thread (recommended)
+    - DISCORD_THREAD_NAME: Create a new thread for each alert (creates many threads)
+
+    If webhook points to a forum channel and neither is set, uses alert title as thread name.
     """
-    def __init__(self, webhook_url: str = None):
+    def __init__(self, webhook_url: str = None, thread_id: str = None, thread_name: str = None):
         self.webhook_url = webhook_url or getattr(settings, 'DISCORD_WEBHOOK_URL', None)
-    
+        self.thread_id = thread_id or getattr(settings, 'DISCORD_THREAD_ID', None)
+        self.thread_name = thread_name or getattr(settings, 'DISCORD_THREAD_NAME', None)
+        self._is_forum_channel = None  # Will be detected on first send
+
     @property
     def name(self) -> str: return "Discord"
-    
+
     async def send(self, alert: AlertMessage) -> bool:
         if not self.is_configured(): return False
         try:
@@ -174,18 +183,64 @@ class DiscordAlert(AlertChannel):
             ]
             if alert.market_question:
                 fields.insert(0, {"name": "📊 Market", "value": alert.market_question[:100], "inline": False})
-            
+
+            payload = {
+                "embeds": [{
+                    "title": f"🐋 {alert.title}",
+                    "description": alert.message,
+                    "color": color,
+                    "fields": fields,
+                    "timestamp": alert.timestamp.isoformat(),
+                    "footer": {"text": "Whale Tracker"}
+                }],
+                "username": "Whale Tracker"
+            }
+
+            # Add forum channel support
+            if self.thread_id:
+                # Post to existing thread
+                payload["thread_id"] = self.thread_id
+            elif self.thread_name:
+                # Create new thread with configured name
+                payload["thread_name"] = self.thread_name
+
             async with httpx.AsyncClient() as client:
-                r = await client.post(self.webhook_url, json={
-                    "embeds": [{"title": f"🐋 {alert.title}", "description": alert.message, "color": color,
-                               "fields": fields, "timestamp": alert.timestamp.isoformat(), "footer": {"text": "Whale Tracker"}}],
-                    "username": "Whale Tracker"}, timeout=10.0)
+                r = await client.post(self.webhook_url, json=payload, timeout=10.0)
+
                 if r.status_code in [200, 204]:
                     logger.info("🎮 Discord alert sent")
                     return True
-        except Exception as e: logger.error(f"Discord error: {e}")
+
+                # Check if this is a forum channel error
+                if r.status_code == 400:
+                    try:
+                        error_data = r.json()
+                        if error_data.get("code") == 220001:
+                            # Forum channel requires thread_name or thread_id
+                            logger.warning("Discord webhook is a forum channel, retrying with thread_name")
+                            self._is_forum_channel = True
+
+                            # Retry with thread_name based on alert
+                            thread_title = f"${alert.trade_amount:,.0f} {alert.alert_type.replace('_', ' ').title()}"
+                            payload["thread_name"] = thread_title[:100]  # Discord limit
+
+                            r2 = await client.post(self.webhook_url, json=payload, timeout=10.0)
+                            if r2.status_code in [200, 204]:
+                                logger.info(f"🎮 Discord alert sent (new thread: {thread_title})")
+                                return True
+                            else:
+                                logger.error(f"Discord retry failed: {r2.status_code} - {r2.text}")
+                        else:
+                            logger.error(f"Discord error: {r.status_code} - {r.text}")
+                    except Exception as parse_err:
+                        logger.error(f"Discord error: {r.status_code} - {r.text}")
+                else:
+                    logger.error(f"Discord error: {r.status_code} - {r.text}")
+
+        except Exception as e:
+            logger.error(f"Discord error: {e}")
         return False
-    
+
     def is_configured(self) -> bool: return bool(self.webhook_url)
 
 
