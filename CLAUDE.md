@@ -37,6 +37,7 @@ prediction-market-tracker/
 │   ├── config.py          # Configuration settings
 │   ├── database.py        # SQLAlchemy models
 │   ├── polymarket_client.py # Polymarket API client
+│   ├── kalshi_client.py     # Kalshi API client (market data only)
 │   ├── whale_detector.py  # Core detection logic (6 alert types)
 │   ├── alerter.py         # Multi-channel notifications
 │   ├── scheduler.py       # Email digest scheduling
@@ -103,7 +104,8 @@ Save all implementation plans to: `docs/plans/YYYY-MM-DD-<feature-name>.md`
 
 Current planned features:
 - [ ] Stripe billing integration
-- [ ] Kalshi market integration
+- [x] Kalshi market integration (partial - see Kalshi section below)
+- [ ] Kalshi authenticated API (for trade data)
 - [ ] Automated trading module
 - [ ] Mobile app (React Native)
 
@@ -321,3 +323,59 @@ Tracks whether a trade is opening, adding to, or closing a position:
 - Long position + BUY = ADDING
 - No position + any trade = OPENING
 - Note: Position data resets on service restart (no persistence yet)
+
+---
+
+## Kalshi Integration (Added 2026-01-14)
+
+### Overview
+Kalshi is a CFTC-regulated US prediction market exchange. Integration added to track both Polymarket and Kalshi markets.
+
+### Current Status: PARTIAL
+- ✅ Market data (prices, volume, open interest)
+- ❌ Trade data (requires authentication)
+
+### Why Trade Data is Limited
+The **Kalshi public elections API** (`api.elections.kalshi.com`) only provides market data. Trade-level data requires:
+1. API key from Kalshi dashboard
+2. RSA private key for request signing
+3. Authentication on every request
+
+Even WITH authentication, Kalshi trades do NOT expose trader identities (unlike Polymarket's blockchain transparency).
+
+### Files Added/Changed
+- `src/kalshi_client.py` - KalshiClient for public elections API
+- `src/whale_detector.py` - Multi-platform TradeMonitor, anonymous trader detection
+- `src/alerter.py` - Platform-specific URLs, anonymous trader handling
+- `src/main.py` - Initialize both Polymarket + Kalshi clients
+- `src/config.py` - Added `KALSHI_ENABLED` setting
+
+### New API Endpoints
+- `GET /platforms` - Shows enabled platforms and capabilities
+- `GET /markets/kalshi` - Lists active Kalshi markets
+- `GET /health` - Now shows active platforms list
+
+### Environment Variables
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KALSHI_ENABLED` | `true` | Enable/disable Kalshi integration |
+
+### Anonymous Trader Handling
+Kalshi trades have `trader_address="KALSHI_ANON"`. The whale detector:
+- **Skips** wallet-based alerts: NEW_WALLET, FOCUSED_WALLET, SMART_MONEY, REPEAT_ACTOR, HEAVY_ACTOR, WHALE_EXIT, CLUSTER_ACTIVITY, ENTITY_ACTIVITY
+- **Still fires** trade-based alerts: WHALE_TRADE, UNUSUAL_SIZE, MARKET_ANOMALY, EXTREME_CONFIDENCE, HIGH_IMPACT
+
+### To Enable Full Kalshi Trade Tracking
+Would need to implement authenticated API access:
+1. Sign up at https://kalshi.com
+2. Go to Settings → API → Generate API Key
+3. Download RSA private key
+4. Set environment variables:
+   - `KALSHI_API_KEY` - Your API key ID
+   - `KALSHI_PRIVATE_KEY` - Contents of private key (or path)
+5. Implement RSA signing in `kalshi_client.py`
+
+See: https://docs.kalshi.com/getting_started/api_keys
+
+### Commit
+- `790f661` - Add Kalshi prediction market integration
