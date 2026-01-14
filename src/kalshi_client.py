@@ -216,17 +216,20 @@ class KalshiClient:
 
     def _convert_trade(self, item: Dict, market_ticker: str) -> Trade:
         """Convert Kalshi trade data to shared Trade dataclass."""
-        # Parse timestamp
+        # Parse timestamp (convert to naive UTC to match rest of codebase)
         created_time = item.get("created_time", "")
         if created_time:
             try:
                 if created_time.endswith("Z"):
                     created_time = created_time.replace("Z", "+00:00")
                 timestamp = datetime.fromisoformat(created_time)
+                # Convert to naive datetime (remove timezone info)
+                if timestamp.tzinfo is not None:
+                    timestamp = timestamp.replace(tzinfo=None)
             except (ValueError, TypeError):
-                timestamp = datetime.now()
+                timestamp = datetime.utcnow()
         else:
-            timestamp = datetime.now()
+            timestamp = datetime.utcnow()
 
         # Get trade details
         trade_id = item.get("trade_id", str(item.get("id", "")))
@@ -276,7 +279,7 @@ class KalshiClient:
             yes_price = yes_price / total
             no_price = no_price / total
 
-        # Parse close time
+        # Parse close time (convert to naive UTC)
         close_time_str = item.get("close_time", "")
         end_date = None
         if close_time_str:
@@ -284,6 +287,9 @@ class KalshiClient:
                 if close_time_str.endswith("Z"):
                     close_time_str = close_time_str.replace("Z", "+00:00")
                 end_date = datetime.fromisoformat(close_time_str)
+                # Convert to naive datetime
+                if end_date.tzinfo is not None:
+                    end_date = end_date.replace(tzinfo=None)
             except (ValueError, TypeError):
                 pass
 
