@@ -196,32 +196,28 @@ class DiscordAlert(AlertChannel):
                 "username": "Whale Tracker"
             }
 
-            # Add forum channel support
+            # Build URL with thread_id as query parameter (required for forum channels)
+            url = self.webhook_url
             if self.thread_id:
-                # Post to existing thread
-                payload["thread_id"] = self.thread_id
-            elif self.thread_name:
-                # Create new thread with configured name
-                payload["thread_name"] = self.thread_name
+                url = f"{self.webhook_url}?thread_id={self.thread_id}"
 
             async with httpx.AsyncClient() as client:
-                r = await client.post(self.webhook_url, json=payload, timeout=10.0)
+                r = await client.post(url, json=payload, timeout=10.0)
 
                 if r.status_code in [200, 204]:
                     logger.info("🎮 Discord alert sent")
                     return True
 
-                # Check if this is a forum channel error
+                # Check if this is a forum channel error (no thread specified)
                 if r.status_code == 400:
                     try:
                         error_data = r.json()
                         if error_data.get("code") == 220001:
                             # Forum channel requires thread_name or thread_id
                             logger.warning("Discord webhook is a forum channel, retrying with thread_name")
-                            self._is_forum_channel = True
 
-                            # Retry with thread_name based on alert
-                            thread_title = f"${alert.trade_amount:,.0f} {alert.alert_type.replace('_', ' ').title()}"
+                            # Retry with thread_name to create a new thread
+                            thread_title = self.thread_name or f"${alert.trade_amount:,.0f} {alert.alert_type.replace('_', ' ').title()}"
                             payload["thread_name"] = thread_title[:100]  # Discord limit
 
                             r2 = await client.post(self.webhook_url, json=payload, timeout=10.0)
@@ -232,7 +228,7 @@ class DiscordAlert(AlertChannel):
                                 logger.error(f"Discord retry failed: {r2.status_code} - {r2.text}")
                         else:
                             logger.error(f"Discord error: {r.status_code} - {r.text}")
-                    except Exception as parse_err:
+                    except Exception:
                         logger.error(f"Discord error: {r.status_code} - {r.text}")
                 else:
                     logger.error(f"Discord error: {r.status_code} - {r.text}")
