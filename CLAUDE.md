@@ -277,15 +277,31 @@ Updated `alerter.py` and `polymarket_client.py`:
 3. **Position instead of Outcome** - Shows "Buy No" or "Sold Yes" instead of just "No"
 4. **Severity explanation** - HIGH/MEDIUM/LOW now include descriptions
 
-**New Alert Format:**
+**New Alert Format (v2 - with links and categories):**
 ```
-📊 Market: Will Elon Musk post 440-459 tweets...?
+📊 Market: Will Elon Musk post 440-459 tweets...? [clickable link]
+🏛️ Category: Entertainment
 🏦 Platform: Polymarket
 💰 Amount: $1,150.66
 🎯 Position: Buy No
 ⚡ Severity: HIGH (Large trade size, unusual pattern, or high-confidence signal)
-👤 Trader: 0x1234...
+👤 Trader: 0x1234... [clickable link to profile]
 ```
+
+**New Features (commit d9790c7):**
+- **Market URL** - Clickable link to Polymarket market page
+- **Trader URL** - Clickable link to trader's Polymarket profile
+- **Category** - Auto-detected (Politics, Crypto, Sports, Finance, Entertainment, Science, World, Other)
+- **Category emojis**: 🏛️ Politics, ₿ Crypto, ⚽ Sports, 📈 Finance, 🎬 Entertainment, 🔬 Science, 🌍 World
+
+**Category Detection:**
+1. First checks API tags field
+2. Falls back to keyword matching in question text:
+   - Politics: trump, biden, election, congress, senate, etc.
+   - Crypto: bitcoin, ethereum, btc, eth, blockchain, etc.
+   - Sports: nfl, nba, super bowl, championship, etc.
+   - Finance: stock, fed, inflation, gdp, etc.
+   - Entertainment: oscar, grammy, twitter, elon, etc.
 
 **Severity Meanings:**
 - **HIGH** - Large trade size, unusual pattern, or high-confidence signal
