@@ -37,7 +37,7 @@ prediction-market-tracker/
 │   ├── config.py          # Configuration settings
 │   ├── database.py        # SQLAlchemy models
 │   ├── polymarket_client.py # Polymarket API client
-│   ├── kalshi_client.py     # Kalshi API client (market data only)
+│   ├── kalshi_client.py     # Kalshi API client (with RSA auth for trades)
 │   ├── whale_detector.py  # Core detection logic (6 alert types)
 │   ├── alerter.py         # Multi-channel notifications
 │   ├── scheduler.py       # Email digest scheduling
@@ -104,8 +104,8 @@ Save all implementation plans to: `docs/plans/YYYY-MM-DD-<feature-name>.md`
 
 Current planned features:
 - [ ] Stripe billing integration
-- [x] Kalshi market integration (partial - see Kalshi section below)
-- [ ] Kalshi authenticated API (for trade data)
+- [x] Kalshi market integration (full - markets + trades)
+- [x] Kalshi authenticated API (RSA-PSS signing implemented)
 - [ ] Automated trading module
 - [ ] Mobile app (React Native)
 
@@ -125,7 +125,7 @@ See `.env.example` for all required/optional API keys:
 - Resend (email alerts)
 - Discord/Telegram/Slack webhooks
 - Stripe (billing - planned)
-- Kalshi (planned)
+- Kalshi (API key + RSA private key for trade data)
 
 ---
 
@@ -166,6 +166,8 @@ railway redeploy -y
 | `POLL_INTERVAL` | Trade polling interval in seconds (default: 30) |
 | `WHALE_THRESHOLD_USDC` | Minimum USD for whale alerts (default: 10000) |
 | `LOG_LEVEL` | Logging level (default: INFO) |
+| `KALSHI_API_KEY` | Kalshi API key ID (UUID format) |
+| `KALSHI_PRIVATE_KEY_B64` | Base64-encoded RSA private key for Kalshi |
 
 ---
 
@@ -383,3 +385,77 @@ See: https://docs.kalshi.com/getting_started/api_keys
 - `790f661` - Add Kalshi prediction market integration
 - `d87eb6b` - Add Kalshi authenticated API support for trade fetching
 - `efec456` - Fix timezone-aware datetime comparison error
+- `ccf6544` - Update CLAUDE.md with Kalshi auth documentation
+
+---
+
+## Session Log (2026-01-14) - Kalshi Authenticated API
+
+### Task: Enable Kalshi Trade Data Fetching
+
+**Problem**: Initial Kalshi integration only fetched market data. Trade data requires authenticated API access.
+
+**Solution**: Implemented RSA-PSS authentication for Kalshi API.
+
+### Implementation Steps
+
+1. **User provided credentials**:
+   - API Key ID: `18d0d054-c3fc-474d-a93d-7cefa8fa22f0`
+   - RSA private key (downloaded from Kalshi dashboard)
+
+2. **Set Railway environment variables**:
+   ```bash
+   railway variables --set KALSHI_API_KEY=18d0d054-c3fc-474d-a93d-7cefa8fa22f0
+   railway variables --set KALSHI_PRIVATE_KEY_B64=<base64-encoded-key>
+   ```
+
+3. **Updated `src/kalshi_client.py`**:
+   - Added RSA private key loading from base64 env var
+   - Implemented `_sign_request()` with RSA-PSS padding + SHA-256
+   - Sign message format: `timestamp + method + path` (no query params!)
+   - Use elections API for all requests (trading API deprecated)
+   - Changed trade endpoint from `/markets/{ticker}/trades` to `/markets/trades`
+
+4. **Fixed timezone issue**:
+   - Kalshi timestamps are timezone-aware (UTC)
+   - Whale detector uses naive datetimes
+   - Solution: Strip timezone info in `_convert_trade()` and `_convert_market()`
+
+### Key Discoveries
+
+1. **Trading API deprecated**: Kalshi moved everything to `api.elections.kalshi.com`
+   - Old: `https://trading-api.kalshi.com/trade-api/v2` (returns 401 with migration message)
+   - New: `https://api.elections.kalshi.com/trade-api/v2`
+
+2. **Signature requirements** (from Kalshi docs):
+   - Padding: RSA-PSS (not PKCS1v15!)
+   - Hash: SHA-256
+   - Salt length: digest length
+   - Path: Must NOT include query parameters
+
+3. **Trade endpoint**:
+   - Per-market trades (`/markets/{ticker}/trades`) returns 404
+   - Global trades (`/markets/trades`) works with optional `ticker` filter
+
+### Files Changed
+- `src/kalshi_client.py` - Full RSA auth implementation
+- `src/config.py` - Added `KALSHI_PRIVATE_KEY_B64` setting
+
+### Result
+Both Polymarket and Kalshi trades now being monitored:
+```
+Fetched 100 trades (Polymarket)
+Fetched 100 Kalshi trades
+Analyzed 200 trades, generated X alerts
+Platform: Kalshi (in Discord alerts)
+```
+
+### Testing Commands
+```bash
+# Test locally with Railway credentials
+railway variables --json > kalshi_env.json
+python test_kalshi_auth.py
+
+# Check Railway logs for Kalshi activity
+railway logs -n 100 | grep -i kalshi
+```
