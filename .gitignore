@@ -42,3 +42,4 @@ tmpclaude-*
 
 # Superpowers is a git submodule/clone - don't track its .git
 .superpowers/.git/
+nul
