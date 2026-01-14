@@ -44,8 +44,8 @@ class Settings(BaseSettings):
     KALSHI_ENABLED: bool = True  # Enable Kalshi market tracking
     KALSHI_ELECTIONS_API: str = "https://api.elections.kalshi.com/trade-api/v2"  # Public API
     KALSHI_API_BASE: str = "https://trading-api.kalshi.com/trade-api/v2"  # Auth required
-    KALSHI_API_KEY: Optional[str] = None  # For authenticated endpoints (optional)
-    KALSHI_PRIVATE_KEY_PATH: Optional[str] = None  # RSA key for auth (optional)
+    KALSHI_API_KEY: Optional[str] = None  # API Key ID from Kalshi dashboard
+    KALSHI_PRIVATE_KEY_B64: Optional[str] = None  # Base64-encoded RSA private key
 
     # ============================================
     # WHALE DETECTION SETTINGS

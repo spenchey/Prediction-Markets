@@ -2,27 +2,20 @@
 Kalshi API Client
 
 Kalshi is a CFTC-regulated US prediction market exchange.
-This client uses their PUBLIC elections API which does not require authentication.
+
+Supports both:
+- PUBLIC elections API (market data only, no auth)
+- AUTHENTICATED trading API (market + trade data, requires RSA signing)
 
 API Documentation: https://docs.kalshi.com
-Elections API Base: https://api.elections.kalshi.com/trade-api/v2
 
-IMPORTANT LIMITATIONS:
-1. The public elections API only provides MARKET DATA (prices, volume, open interest)
-2. TRADE DATA requires authentication with the trading API (RSA key signing)
-3. Even with auth, Kalshi trades do NOT expose trader identities
-   - Wallet-based alerts (NEW_WALLET, SMART_MONEY, etc.) won't work
-   - Only trade-size based alerts would work if trades were available
-
-Current capabilities:
-- Fetch active markets with prices
-- Monitor market price changes
-- Track volume and open interest
-
-Future (requires auth):
-- Fetch trade data for size-based alerts
+IMPORTANT: Even with auth, Kalshi trades do NOT expose trader identities.
+- Wallet-based alerts (NEW_WALLET, SMART_MONEY, etc.) won't work
+- Only trade-size based alerts will work (WHALE_TRADE, UNUSUAL_SIZE, etc.)
 """
 import httpx
+import base64
+import time
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from loguru import logger
@@ -30,6 +23,16 @@ import asyncio
 
 from .config import settings
 from .polymarket_client import Trade, Market
+
+# Try to import cryptography for RSA signing
+try:
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+    from cryptography.hazmat.backends import default_backend
+    HAS_CRYPTO = True
+except ImportError:
+    HAS_CRYPTO = False
+    logger.warning("cryptography package not installed - Kalshi auth disabled")
 
 
 # Category keywords for Kalshi markets
@@ -51,16 +54,20 @@ KALSHI_CATEGORY_KEYWORDS = {
 
 class KalshiClient:
     """
-    Client for Kalshi's public elections API.
+    Client for Kalshi prediction market API.
 
-    Uses the public API which doesn't require authentication for read-only access.
-    Perfect for monitoring markets and trades.
+    Supports:
+    - Public elections API (market data, no auth needed)
+    - Authenticated elections API (trade data, requires API key + RSA private key)
+
+    Note: The trading API (trading-api.kalshi.com) has been deprecated.
+    All requests now go through the elections API.
 
     IMPORTANT: Kalshi does NOT expose trader identities in their API.
     All trades will have trader_address="KALSHI_ANON".
     """
 
-    # Public elections API - no auth required for reading
+    # API endpoint (trading API has been deprecated, all goes through elections now)
     ELECTIONS_API = "https://api.elections.kalshi.com/trade-api/v2"
 
     # Platform identifier
@@ -68,6 +75,35 @@ class KalshiClient:
 
     def __init__(self):
         self._http_client: Optional[httpx.AsyncClient] = None
+        self._private_key = None
+        self._api_key = settings.KALSHI_API_KEY
+        self._load_private_key()
+
+    def _load_private_key(self):
+        """Load RSA private key from base64-encoded environment variable."""
+        if not HAS_CRYPTO:
+            return
+
+        key_b64 = settings.KALSHI_PRIVATE_KEY_B64
+        if not key_b64:
+            return
+
+        try:
+            key_pem = base64.b64decode(key_b64)
+            self._private_key = serialization.load_pem_private_key(
+                key_pem,
+                password=None,
+                backend=default_backend()
+            )
+            logger.info("Kalshi RSA private key loaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to load Kalshi private key: {e}")
+            self._private_key = None
+
+    @property
+    def is_authenticated(self) -> bool:
+        """Check if we have valid authentication credentials."""
+        return bool(self._api_key and self._private_key and HAS_CRYPTO)
 
     @property
     def platform_name(self) -> str:
@@ -79,20 +115,69 @@ class KalshiClient:
         return False
 
     def is_configured(self) -> bool:
-        """Kalshi public API is always available."""
+        """Check if Kalshi is enabled."""
         return settings.KALSHI_ENABLED
+
+    def _sign_request(self, method: str, path: str) -> Dict[str, str]:
+        """
+        Generate authentication headers for Kalshi API request.
+
+        Kalshi uses RSA with PSS padding and SHA256.
+        Message format: timestamp + method + path (WITHOUT query parameters)
+        Example: "1705123456789GET/trade-api/v2/markets"
+        """
+        if not self.is_authenticated:
+            return {}
+
+        timestamp = str(int(time.time() * 1000))
+
+        # Strip query parameters from path (sign only the path, not query string)
+        path_without_query = path.split('?')[0]
+
+        # Build full path for signing
+        full_path = f"/trade-api/v2{path_without_query}" if not path_without_query.startswith("/trade-api") else path_without_query
+        message = f"{timestamp}{method}{full_path}"
+
+        try:
+            # Use PSS padding as per Kalshi docs
+            signature = self._private_key.sign(
+                message.encode('utf-8'),
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.DIGEST_LENGTH
+                ),
+                hashes.SHA256()
+            )
+            signature_b64 = base64.b64encode(signature).decode('utf-8')
+
+            return {
+                "KALSHI-ACCESS-KEY": self._api_key,
+                "KALSHI-ACCESS-TIMESTAMP": timestamp,
+                "KALSHI-ACCESS-SIGNATURE": signature_b64
+            }
+        except Exception as e:
+            logger.error(f"Failed to sign Kalshi request: {e}")
+            return {}
 
     async def __aenter__(self):
         """Set up the HTTP client."""
+        # Always use elections API (trading API has been deprecated)
         self._http_client = httpx.AsyncClient(
             base_url=self.ELECTIONS_API,
             timeout=30.0,
             headers={
                 "Accept": "application/json",
+                "Content-Type": "application/json",
                 "User-Agent": "PredictionMarketTracker/1.0"
             },
             follow_redirects=True
         )
+
+        if self.is_authenticated:
+            logger.info("Kalshi client initialized with authentication")
+        else:
+            logger.debug("Kalshi client initialized without auth (public API only)")
+
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -110,6 +195,17 @@ class KalshiClient:
             )
         return self._http_client
 
+    async def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
+        """Make an authenticated request to Kalshi API."""
+        headers = kwargs.pop("headers", {})
+
+        # Add auth headers if available
+        if self.is_authenticated:
+            auth_headers = self._sign_request(method.upper(), path)
+            headers.update(auth_headers)
+
+        return await self.http.request(method, path, headers=headers, **kwargs)
+
     def _get_category(self, title: str) -> str:
         """Infer category from market title."""
         title_lower = title.lower()
@@ -124,7 +220,6 @@ class KalshiClient:
         created_time = item.get("created_time", "")
         if created_time:
             try:
-                # Handle ISO format with timezone
                 if created_time.endswith("Z"):
                     created_time = created_time.replace("Z", "+00:00")
                 timestamp = datetime.fromisoformat(created_time)
@@ -146,7 +241,6 @@ class KalshiClient:
         outcome = "Yes" if taker_side == "yes" else "No"
 
         # Calculate USD value
-        # Each Kalshi contract pays $1 if correct, so price is cost per contract
         amount_usd = count * price
 
         return Trade(
@@ -154,12 +248,12 @@ class KalshiClient:
             market_id=market_ticker,
             trader_address="KALSHI_ANON",  # Kalshi doesn't expose trader identity
             outcome=outcome,
-            side="buy",  # Taker is always buying the side they're taking
+            side="buy",
             size=float(count),
             price=price,
             amount_usd=amount_usd,
             timestamp=timestamp,
-            transaction_hash=f"kalshi_{trade_id}",  # No tx hash on Kalshi
+            transaction_hash=f"kalshi_{trade_id}",
             platform="Kalshi"
         )
 
@@ -200,7 +294,7 @@ class KalshiClient:
         return Market(
             id=ticker,
             question=title,
-            slug=ticker,  # Use ticker as slug for URL building
+            slug=ticker,
             outcome_prices={"Yes": yes_price, "No": no_price},
             volume=float(item.get("volume", 0) or 0),
             liquidity=float(item.get("open_interest", 0) or 0),
@@ -210,16 +304,13 @@ class KalshiClient:
         )
 
     async def get_active_markets(self, limit: int = 100) -> List[Market]:
-        """
-        Fetch active markets from Kalshi.
-
-        Returns Market objects compatible with the whale detection system.
-        """
+        """Fetch active markets from Kalshi."""
         try:
-            response = await self.http.get(
+            response = await self._request(
+                "GET",
                 "/markets",
                 params={
-                    "limit": min(limit, 200),  # Kalshi max is 200
+                    "limit": min(limit, 200),
                     "status": "open"
                 }
             )
@@ -248,62 +339,64 @@ class KalshiClient:
         limit: int = 100
     ) -> List[Trade]:
         """
-        Fetch recent trades from Kalshi.
+        Fetch recent trades from Kalshi using the global trades endpoint.
 
-        NOTE: The public Kalshi elections API does NOT expose trade data.
-        Trade data requires authentication with the trading API.
-        This method returns an empty list unless authenticated.
-
-        For now, Kalshi integration provides:
-        - Market data (prices, volume, open interest)
-        - Market monitoring for price changes
-
-        Trade-level whale detection is not available on Kalshi without auth.
+        Requires authentication. Without auth, returns empty list.
 
         Args:
             market_id: Optional market ticker to filter by
-            limit: Maximum trades to fetch (per market)
+            limit: Maximum trades to fetch
         """
-        # Public API doesn't expose trades - would need authenticated trading API
-        # Log this once per session
-        logger.debug("Kalshi public API doesn't expose trade data (auth required)")
-        return []
+        if not self.is_authenticated:
+            logger.debug("Kalshi trade fetching requires authentication")
+            return []
 
-    async def _get_market_trades(self, ticker: str, limit: int = 100) -> List[Trade]:
-        """Fetch trades for a specific market."""
         try:
-            response = await self.http.get(
-                f"/markets/{ticker}/trades",
-                params={"limit": min(limit, 100)}
-            )
+            # Use the global /markets/trades endpoint
+            params = {"limit": min(limit, 100)}
+            if market_id:
+                params["ticker"] = market_id
+
+            response = await self._request("GET", "/markets/trades", params=params)
             response.raise_for_status()
             data = response.json()
 
             trades = []
             for item in data.get("trades", []):
                 try:
+                    # Get ticker from trade data
+                    ticker = item.get("ticker", market_id or "UNKNOWN")
                     trade = self._convert_trade(item, ticker)
                     trades.append(trade)
                 except Exception as e:
                     logger.warning(f"Failed to parse Kalshi trade: {e}")
                     continue
 
+            # Sort by timestamp descending
+            trades.sort(key=lambda t: t.timestamp, reverse=True)
+
+            if trades:
+                logger.info(f"Fetched {len(trades)} Kalshi trades")
+
             return trades
 
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                logger.debug(f"No trades found for market {ticker}")
+            if e.response.status_code == 401:
+                logger.warning("Kalshi authentication failed - check API key and private key")
             else:
-                logger.warning(f"Failed to fetch trades for {ticker}: {e}")
+                logger.warning(f"Failed to fetch Kalshi trades: {e}")
             return []
         except httpx.HTTPError as e:
-            logger.warning(f"HTTP error fetching trades for {ticker}: {e}")
+            logger.warning(f"HTTP error fetching Kalshi trades: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Kalshi trades error: {e}")
             return []
 
     async def get_market_by_ticker(self, ticker: str) -> Optional[Market]:
         """Fetch a specific market by its ticker."""
         try:
-            response = await self.http.get(f"/markets/{ticker}")
+            response = await self._request("GET", f"/markets/{ticker}")
             response.raise_for_status()
             data = response.json()
 
@@ -330,14 +423,16 @@ class KalshiClient:
 async def test_kalshi():
     """Test the Kalshi client."""
     print("\n" + "=" * 60)
-    print("TESTING KALSHI CLIENT (Public Elections API)")
+    print("TESTING KALSHI CLIENT")
     print("=" * 60)
 
     if not settings.KALSHI_ENABLED:
-        print("\nKalshi is disabled in settings. Set KALSHI_ENABLED=true to enable.")
+        print("\nKalshi is disabled in settings.")
         return
 
     async with KalshiClient() as client:
+        print(f"\nAuthentication: {'YES' if client.is_authenticated else 'NO (public API only)'}")
+
         # Fetch markets
         print("\nFetching active markets...")
         markets = await client.get_active_markets(limit=10)
@@ -348,14 +443,10 @@ async def test_kalshi():
                 print(f"  [{m.category}] {m.question[:60]}...")
                 print(f"    Ticker: {m.id}")
                 print(f"    Yes: {m.outcome_prices['Yes']:.1%} | Volume: {m.volume:,.0f}")
-                print(f"    URL: {client.get_market_url(m)}")
                 print()
-        else:
-            print("No markets found (API may be unavailable)")
-            return
 
-        # Fetch trades
-        print("\nFetching recent trades...")
+        # Fetch trades (only works with auth)
+        print("Fetching recent trades...")
         trades = await client.get_recent_trades(limit=20)
 
         if trades:
@@ -363,22 +454,13 @@ async def test_kalshi():
             for t in trades[:5]:
                 print(f"  ${t.amount_usd:,.2f} - {t.side} {t.outcome}")
                 print(f"    Market: {t.market_id}")
-                print(f"    Trader: {t.trader_address} (anonymous)")
                 print(f"    Platform: {t.platform}")
                 print()
-
-            # Show any large trades
-            large_trades = [t for t in trades if t.amount_usd >= 100]
-            if large_trades:
-                print(f"\nLarge trades (>=$100): {len(large_trades)}")
-                for t in large_trades[:3]:
-                    print(f"  ${t.amount_usd:,.2f} on {t.market_id}")
         else:
-            print("No trades found")
+            print("No trades found (authentication may be required)")
 
     print("\n" + "=" * 60)
-    print("Kalshi client working correctly!")
-    print("Note: Trader identity is always 'KALSHI_ANON' (not exposed by API)")
+    print("Test complete!")
     print("=" * 60)
 
 
