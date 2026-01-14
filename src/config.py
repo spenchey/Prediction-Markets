@@ -39,14 +39,13 @@ class Settings(BaseSettings):
     POLL_INTERVAL: int = 60  # Check every minute
 
     # ============================================
-    # KALSHI API SETTINGS (for future use)
+    # KALSHI API SETTINGS
     # ============================================
-    KALSHI_API_BASE: str = "https://trading-api.kalshi.com/trade-api/v2"
-    KALSHI_API_KEY: Optional[str] = None
-    KALSHI_PRIVATE_KEY_PATH: Optional[str] = None
-    KALSHI_EMAIL: Optional[str] = None
-    KALSHI_PASSWORD: Optional[str] = None
-    KALSHI_DEMO: bool = True  # Set to False for production
+    KALSHI_ENABLED: bool = True  # Enable Kalshi market tracking
+    KALSHI_ELECTIONS_API: str = "https://api.elections.kalshi.com/trade-api/v2"  # Public API
+    KALSHI_API_BASE: str = "https://trading-api.kalshi.com/trade-api/v2"  # Auth required
+    KALSHI_API_KEY: Optional[str] = None  # For authenticated endpoints (optional)
+    KALSHI_PRIVATE_KEY_PATH: Optional[str] = None  # RSA key for auth (optional)
 
     # ============================================
     # WHALE DETECTION SETTINGS

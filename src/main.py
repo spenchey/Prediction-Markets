@@ -28,6 +28,7 @@ import sys
 from .config import settings
 from .database import Database, get_db, TradeRecord, AlertRecord
 from .polymarket_client import PolymarketClient, Market
+from .kalshi_client import KalshiClient
 from .whale_detector import WhaleDetector, WhaleAlert, TradeMonitor
 from .alerter import Alerter, create_default_alerter
 
@@ -187,18 +188,37 @@ async def lifespan(app: FastAPI):
         logger.error(f"❌ Whale detector initialization failed: {e}")
         detector = None
 
+    # Initialize platform clients
+    platform_clients = []
+    platform_names = []
+
+    # Always add Polymarket (no auth needed)
+    platform_clients.append(PolymarketClient())
+    platform_names.append("Polymarket")
+
+    # Add Kalshi if enabled
+    if settings.KALSHI_ENABLED:
+        kalshi_client = KalshiClient()
+        platform_clients.append(kalshi_client)
+        platform_names.append("Kalshi")
+        logger.info("✅ Kalshi client enabled")
+    else:
+        logger.info("ℹ️ Kalshi client disabled (KALSHI_ENABLED=false)")
+
     # Initialize trade monitor
     try:
         if detector:
             monitor = TradeMonitor(
                 detector=detector,
                 poll_interval=settings.POLL_INTERVAL,
-                on_alert=on_alert_detected
+                on_alert=on_alert_detected,
+                clients=platform_clients
             )
 
             # Start monitoring in background
             monitor_task = asyncio.create_task(monitor.start())
             logger.info(f"✅ Trade monitor started (polling every {settings.POLL_INTERVAL}s)")
+            logger.info(f"   Platforms: {', '.join(platform_names)}")
         else:
             logger.warning("⚠️ Trade monitor not started - detector not available")
     except Exception as e:
@@ -285,10 +305,16 @@ async def health_check():
 
     Returns 200 to pass healthcheck - shows component status in response.
     """
+    # Build list of enabled platforms
+    platforms = ["Polymarket"]
+    if settings.KALSHI_ENABLED:
+        platforms.append("Kalshi")
+
     health = {
         "status": "ok",
         "database": "unknown",
         "monitor": "unknown",
+        "platforms": platforms,
         "message": "App is running"
     }
 
@@ -317,6 +343,60 @@ async def health_check():
 # =========================================
 # MARKETS ENDPOINTS
 # =========================================
+
+@app.get("/platforms")
+async def get_platforms():
+    """
+    Get information about configured prediction market platforms.
+    """
+    platforms = {
+        "polymarket": {
+            "enabled": True,
+            "name": "Polymarket",
+            "whale_tracking": True,
+            "trade_data": True,
+            "description": "Crypto-native prediction market on Polygon"
+        },
+        "kalshi": {
+            "enabled": settings.KALSHI_ENABLED,
+            "name": "Kalshi",
+            "whale_tracking": False,
+            "trade_data": False,
+            "description": "CFTC-regulated US exchange - market data only (trade data requires auth)"
+        }
+    }
+
+    enabled_platforms = [k for k, v in platforms.items() if v["enabled"]]
+
+    return {
+        "enabled": enabled_platforms,
+        "platforms": platforms,
+        "note": "Kalshi public API provides market data only. Trade data requires authentication."
+    }
+
+
+@app.get("/markets/kalshi", response_model=List[MarketResponse])
+async def get_kalshi_markets(limit: int = Query(20, ge=1, le=100)):
+    """
+    Get active Kalshi prediction markets.
+    """
+    if not settings.KALSHI_ENABLED:
+        raise HTTPException(status_code=400, detail="Kalshi is not enabled")
+
+    async with KalshiClient() as client:
+        markets = await client.get_active_markets(limit=limit)
+
+    return [
+        MarketResponse(
+            id=m.id,
+            question=m.question,
+            yes_price=m.outcome_prices.get("Yes", 0.5),
+            no_price=m.outcome_prices.get("No", 0.5),
+            volume=m.volume
+        )
+        for m in markets
+    ]
+
 
 @app.get("/markets", response_model=List[MarketResponse])
 async def get_markets(limit: int = Query(20, ge=1, le=100)):

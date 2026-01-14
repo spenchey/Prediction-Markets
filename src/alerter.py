@@ -218,11 +218,15 @@ class DiscordAlert(AlertChannel):
             if alert.market_url:
                 market_text = f"[{market_text}]({alert.market_url})"
 
-            # Trader with link to profile
-            trader_short = f"{alert.trader_address[:20]}..."
-            if alert.trader_url:
+            # Trader with link to profile (handle anonymous traders)
+            is_anonymous = alert.trader_address.startswith("KALSHI_") or alert.trader_address == "UNKNOWN"
+            if is_anonymous:
+                trader_text = "_Anonymous (platform doesn't expose trader identity)_"
+            elif alert.trader_url:
+                trader_short = f"{alert.trader_address[:20]}..."
                 trader_text = f"[`{trader_short}`]({alert.trader_url})"
             else:
+                trader_short = f"{alert.trader_address[:20]}..."
                 trader_text = f"`{trader_short}`"
 
             # Category emoji
@@ -459,10 +463,19 @@ class Alerter:
         mkt_url = market_url or getattr(whale_alert, 'market_url', None)
         mkt_category = category or getattr(whale_alert, 'category', 'Other')
 
-        # Get trader URL from trade
+        # Get trader URL from trade (platform-aware)
         trader_url = getattr(whale_alert.trade, 'trader_url', None)
         if not trader_url and whale_alert.trade.trader_address:
-            trader_url = f"https://polymarket.com/profile/{whale_alert.trade.trader_address}"
+            # Generate platform-specific trader URL
+            trader_addr = whale_alert.trade.trader_address
+            if trader_addr.startswith("KALSHI_") or trader_addr == "UNKNOWN":
+                trader_url = None  # Kalshi doesn't expose trader profiles
+            elif platform == "Polymarket":
+                trader_url = f"https://polymarket.com/profile/{trader_addr}"
+            elif platform == "Kalshi":
+                trader_url = None  # Kalshi doesn't expose trader profiles
+            else:
+                trader_url = None  # Unknown platform
 
         message = AlertMessage(
             title=whale_alert.alert_type.replace('_', ' ').title(),

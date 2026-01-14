@@ -44,7 +44,7 @@ import re
 import hashlib
 from loguru import logger
 
-from .polymarket_client import Trade, PolymarketClient
+from .polymarket_client import Trade, Market, PolymarketClient
 
 
 # =========================================
@@ -454,6 +454,20 @@ class WhaleDetector:
 
         # NEW: On-chain freshness threshold
         self.fresh_wallet_nonce_threshold = 10  # Wallets with nonce < 10 are "fresh"
+
+        # Anonymous trader identifiers (platforms that don't expose trader identity)
+        self.anonymous_trader_prefixes = ("KALSHI_ANON", "UNKNOWN", "ANONYMOUS")
+
+    def _is_anonymous_trader(self, trader_address: str) -> bool:
+        """
+        Check if trader is anonymous (no identity available).
+
+        Some platforms like Kalshi don't expose trader identities.
+        Returns True if trader cannot be identified.
+        """
+        if not trader_address:
+            return True
+        return trader_address.startswith(self.anonymous_trader_prefixes)
 
     def _update_wallet_profile(self, trade: Trade, market_question: str = None) -> WalletProfile:
         """
@@ -958,7 +972,8 @@ class WhaleDetector:
                 ))
 
         # 4. New wallet making significant trade
-        if profile.is_new_wallet and trade.amount_usd >= self.new_wallet_threshold_usd:
+        # Skip for anonymous traders (platforms that don't expose trader identity)
+        if profile.is_new_wallet and trade.amount_usd >= self.new_wallet_threshold_usd and not self._is_anonymous_trader(trade.trader_address):
             severity_score = 8 if trade.amount_usd >= 5000 else 6
             alerts.append(WhaleAlert(
                 id=f"new_{trade.id}",
@@ -976,7 +991,8 @@ class WhaleDetector:
             ))
 
         # 5. Focused wallet making big trade (from ChatGPT MVP)
-        if profile.is_focused and trade.amount_usd >= self.focused_wallet_threshold_usd:
+        # Skip for anonymous traders
+        if profile.is_focused and trade.amount_usd >= self.focused_wallet_threshold_usd and not self._is_anonymous_trader(trade.trader_address):
             severity_score = 7
             alerts.append(WhaleAlert(
                 id=f"focused_{trade.id}",
@@ -994,7 +1010,8 @@ class WhaleDetector:
             ))
 
         # 6. Smart money (high win-rate wallet) making a trade
-        if profile.is_smart_money and trade.amount_usd >= 500:
+        # Skip for anonymous traders
+        if profile.is_smart_money and trade.amount_usd >= 500 and not self._is_anonymous_trader(trade.trader_address):
             severity_score = 9  # Smart money is always high priority
             alerts.append(WhaleAlert(
                 id=f"smart_{trade.id}",
@@ -1016,7 +1033,8 @@ class WhaleDetector:
         # ==========================================
 
         # 7. Repeat Actor Detection (2+ trades in 1 hour)
-        if profile.is_repeat_actor and trade.amount_usd >= 1000:
+        # Skip for anonymous traders
+        if profile.is_repeat_actor and trade.amount_usd >= 1000 and not self._is_anonymous_trader(trade.trader_address):
             severity_score = 7
             alerts.append(WhaleAlert(
                 id=f"repeat_{trade.id}",
@@ -1034,7 +1052,8 @@ class WhaleDetector:
             ))
 
         # 8. Heavy Actor Detection (5+ trades in 24 hours)
-        if profile.is_heavy_actor and trade.amount_usd >= 500:
+        # Skip for anonymous traders
+        if profile.is_heavy_actor and trade.amount_usd >= 500 and not self._is_anonymous_trader(trade.trader_address):
             severity_score = 8
             alerts.append(WhaleAlert(
                 id=f"heavy_{trade.id}",
@@ -1080,7 +1099,8 @@ class WhaleDetector:
             ))
 
         # 10. Whale Exit Detection (large sells)
-        if trade.side.lower() == "sell" and trade.amount_usd >= self.exit_threshold_usd:
+        # Skip for anonymous traders
+        if trade.side.lower() == "sell" and trade.amount_usd >= self.exit_threshold_usd and not self._is_anonymous_trader(trade.trader_address):
             # Check if this wallet has been a significant buyer
             if profile.buy_volume_usd >= self.whale_threshold_usd:
                 severity_score = 8  # Whale exiting is significant
@@ -1119,7 +1139,10 @@ class WhaleDetector:
             ))
 
         # 12. Cluster Activity Detection (coordinated wallets)
-        cluster_wallets = self._detect_cluster_activity(trade)
+        # Skip for anonymous traders (can't correlate wallets without identity)
+        cluster_wallets = None
+        if not self._is_anonymous_trader(trade.trader_address):
+            cluster_wallets = self._detect_cluster_activity(trade)
         if cluster_wallets and len(cluster_wallets) >= 2 and trade.amount_usd >= 2000:
             severity_score = 9  # Coordinated activity is very suspicious
             alerts.append(WhaleAlert(
@@ -1161,7 +1184,10 @@ class WhaleDetector:
             ))
 
         # 14. Entity Activity Detection (multi-wallet entity trading)
-        entity = self.get_entity_for_wallet(trade.trader_address)
+        # Skip for anonymous traders
+        entity = None
+        if not self._is_anonymous_trader(trade.trader_address):
+            entity = self.get_entity_for_wallet(trade.trader_address)
         if entity and entity.wallet_count >= 2 and trade.amount_usd >= 1000:
             severity_score = 9  # Entity activity is very interesting
             alerts.append(WhaleAlert(
@@ -1358,6 +1384,7 @@ class TradeMonitor:
     This is the main loop that runs in production.
 
     Enhanced with:
+    - Multi-platform support (Polymarket, Kalshi, etc.)
     - Market question fetching for sports filtering
     - Better error handling and retry logic
     - Statistics tracking
@@ -1368,12 +1395,14 @@ class TradeMonitor:
         detector: WhaleDetector,
         poll_interval: int = 60,
         on_alert=None,  # Callback function when alert detected
-        fetch_market_info: bool = True  # Fetch market questions for context
+        fetch_market_info: bool = True,  # Fetch market questions for context
+        clients: List = None  # List of platform clients (PolymarketClient, KalshiClient, etc.)
     ):
         self.detector = detector
         self.poll_interval = poll_interval
         self.on_alert = on_alert
         self.fetch_market_info = fetch_market_info
+        self.clients = clients or []  # Platform clients to poll
         self.seen_trades: Set[str] = set()  # Avoid duplicate alerts
         self._running = False
 
@@ -1381,8 +1410,9 @@ class TradeMonitor:
         self.total_trades_processed = 0
         self.total_alerts_generated = 0
         self.last_check_time: Optional[datetime] = None
+        self.trades_by_platform: Dict[str, int] = {}  # Track trades per platform
 
-        # Market info caches
+        # Market info caches (keyed by platform:market_id)
         self._market_cache: Dict[str, str] = {}  # market_id -> question
         self._market_url_cache: Dict[str, str] = {}  # market_id -> URL
         self._market_category_cache: Dict[str, str] = {}  # market_id -> category
@@ -1390,7 +1420,9 @@ class TradeMonitor:
     async def start(self):
         """Start the monitoring loop."""
         self._running = True
-        logger.info(f"🚀 Starting trade monitor (polling every {self.poll_interval}s)")
+        platform_names = [getattr(c, 'platform_name', c.__class__.__name__) for c in self.clients] if self.clients else ["Polymarket"]
+        logger.info(f"Starting trade monitor (polling every {self.poll_interval}s)")
+        logger.info(f"   Platforms: {', '.join(platform_names)}")
         logger.info(f"   Sports filtering: {'ENABLED' if self.detector.exclude_sports else 'DISABLED'}")
 
         while self._running:
@@ -1409,7 +1441,7 @@ class TradeMonitor:
         logger.info(f"   Total trades processed: {self.total_trades_processed}")
         logger.info(f"   Total alerts generated: {self.total_alerts_generated}")
 
-    async def _fetch_market_info(self, market_ids: Set[str]) -> Dict[str, str]:
+    async def _fetch_market_info(self, market_ids: Set[str], trades: List[Trade] = None) -> Dict[str, str]:
         """Fetch market info (questions, URLs, categories) for a set of market IDs."""
         questions = {}
 
@@ -1417,19 +1449,54 @@ class TradeMonitor:
         uncached = [mid for mid in market_ids if mid not in self._market_cache]
 
         if uncached and self.fetch_market_info:
-            try:
-                async with PolymarketClient() as client:
-                    markets = await client.get_active_markets(limit=200)
-                    for market in markets:
-                        self._market_cache[market.id] = market.question
-                        self._market_url_cache[market.id] = market.url
-                        self._market_category_cache[market.id] = market.category
-                        # Also update detector's caches
-                        self.detector.market_questions[market.id] = market.question
-                        self.detector.market_urls[market.id] = market.url
-                        self.detector.market_categories[market.id] = market.category
-            except Exception as e:
-                logger.warning(f"Failed to fetch market info: {e}")
+            # Group uncached market IDs by platform (infer from trades)
+            platform_markets: Dict[str, Set[str]] = {}
+            if trades:
+                for trade in trades:
+                    platform = getattr(trade, 'platform', 'Polymarket')
+                    if trade.market_id in uncached:
+                        if platform not in platform_markets:
+                            platform_markets[platform] = set()
+                        platform_markets[platform].add(trade.market_id)
+
+            # Fetch from each platform
+            for client in (self.clients or []):
+                platform_name = getattr(client, 'platform_name', client.__class__.__name__)
+                try:
+                    if hasattr(client, 'is_configured') and not client.is_configured():
+                        continue
+
+                    async with client as c:
+                        markets = await c.get_active_markets(limit=200)
+                        for market in markets:
+                            self._market_cache[market.id] = market.question
+                            # Generate platform-specific URL
+                            if hasattr(c, 'get_market_url'):
+                                self._market_url_cache[market.id] = c.get_market_url(market)
+                            else:
+                                self._market_url_cache[market.id] = getattr(market, 'url', '')
+                            self._market_category_cache[market.id] = market.category
+                            # Also update detector's caches
+                            self.detector.market_questions[market.id] = market.question
+                            self.detector.market_urls[market.id] = self._market_url_cache[market.id]
+                            self.detector.market_categories[market.id] = market.category
+                except Exception as e:
+                    logger.warning(f"Failed to fetch market info from {platform_name}: {e}")
+
+            # Fallback to Polymarket if no clients configured
+            if not self.clients:
+                try:
+                    async with PolymarketClient() as client:
+                        markets = await client.get_active_markets(limit=200)
+                        for market in markets:
+                            self._market_cache[market.id] = market.question
+                            self._market_url_cache[market.id] = market.url
+                            self._market_category_cache[market.id] = market.category
+                            self.detector.market_questions[market.id] = market.question
+                            self.detector.market_urls[market.id] = market.url
+                            self.detector.market_categories[market.id] = market.category
+                except Exception as e:
+                    logger.warning(f"Failed to fetch market info from Polymarket: {e}")
 
         # Return all from cache
         for mid in market_ids:
@@ -1439,22 +1506,51 @@ class TradeMonitor:
         return questions
 
     async def _check_for_trades(self):
-        """Fetch new trades and check for alerts."""
-        async with PolymarketClient() as client:
-            trades = await client.get_recent_trades(limit=100)
+        """Fetch new trades from all configured platforms and check for alerts."""
+        all_new_trades = []
 
-        # Filter to new trades only
-        new_trades = [
-            t for t in trades
-            if t.id not in self.seen_trades
-        ]
+        # If no clients configured, use default Polymarket client
+        if not self.clients:
+            async with PolymarketClient() as client:
+                trades = await client.get_recent_trades(limit=100)
+                new_trades = [t for t in trades if t.id not in self.seen_trades]
+                all_new_trades.extend(new_trades)
+                for trade in new_trades:
+                    self.seen_trades.add(trade.id)
+        else:
+            # Poll each configured client
+            for client in self.clients:
+                try:
+                    platform_name = getattr(client, 'platform_name', client.__class__.__name__)
 
-        if not new_trades:
+                    # Check if client is configured/enabled
+                    if hasattr(client, 'is_configured') and not client.is_configured():
+                        continue
+
+                    async with client as c:
+                        trades = await c.get_recent_trades(limit=100)
+
+                        # Filter to new trades only
+                        new_trades = [t for t in trades if t.id not in self.seen_trades]
+
+                        if new_trades:
+                            logger.debug(f"Found {len(new_trades)} new trades from {platform_name}")
+                            all_new_trades.extend(new_trades)
+
+                            # Track per-platform stats
+                            self.trades_by_platform[platform_name] = self.trades_by_platform.get(platform_name, 0) + len(new_trades)
+
+                            # Mark as seen
+                            for trade in new_trades:
+                                self.seen_trades.add(trade.id)
+
+                except Exception as e:
+                    platform_name = getattr(client, 'platform_name', client.__class__.__name__)
+                    logger.error(f"Error polling {platform_name}: {e}")
+                    continue
+
+        if not all_new_trades:
             return
-
-        # Mark as seen
-        for trade in new_trades:
-            self.seen_trades.add(trade.id)
 
         # Keep seen_trades from growing forever
         if len(self.seen_trades) > 50_000:
@@ -1462,14 +1558,14 @@ class TradeMonitor:
             self.seen_trades = set(list(self.seen_trades)[-25_000:])
 
         # Fetch market info for context and filtering
-        market_ids = {t.market_id for t in new_trades}
-        market_questions = await self._fetch_market_info(market_ids)
+        market_ids = {t.market_id for t in all_new_trades}
+        market_questions = await self._fetch_market_info(market_ids, all_new_trades)
 
         # Analyze for alerts
-        alerts = await self.detector.analyze_trades(new_trades, market_questions)
+        alerts = await self.detector.analyze_trades(all_new_trades, market_questions)
 
         # Update statistics
-        self.total_trades_processed += len(new_trades)
+        self.total_trades_processed += len(all_new_trades)
         self.total_alerts_generated += len(alerts)
 
         # Trigger callback for each alert
