@@ -307,3 +307,17 @@ Updated `alerter.py` and `polymarket_client.py`:
 - **HIGH** - Large trade size, unusual pattern, or high-confidence signal
 - **MEDIUM** - Notable activity worth monitoring
 - **LOW** - Minor signal, may be noise
+
+**Position Action (commit 5ca64bc):**
+Tracks whether a trade is opening, adding to, or closing a position:
+- 🆕 **OPENING** - First trade in this market/outcome (new position)
+- ➕ **ADDING** - Adding to an existing position in same direction
+- 🔚 **CLOSING** - Reducing/exiting an existing position
+
+**How it works:**
+- Tracks per-market positions for each wallet (buy_shares, sell_shares, USD amounts)
+- Before each trade, checks wallet's existing position in that market/outcome
+- Long position (bought > sold) + SELL = CLOSING
+- Long position + BUY = ADDING
+- No position + any trade = OPENING
+- Note: Position data resets on service restart (no persistence yet)
