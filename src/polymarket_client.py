@@ -29,6 +29,14 @@ class Market:
     liquidity: float
     end_date: Optional[datetime]
     active: bool
+    category: str = "Other"  # Politics, Crypto, Sports, Finance, etc.
+
+    @property
+    def url(self) -> str:
+        """Get the Polymarket URL for this market."""
+        if self.slug:
+            return f"https://polymarket.com/event/{self.slug}"
+        return f"https://polymarket.com/markets?id={self.id}"
 
 
 @dataclass
@@ -45,6 +53,18 @@ class Trade:
     timestamp: datetime
     transaction_hash: str
     platform: str = "Polymarket"  # Platform name: "Polymarket", "Kalshi", "PredictIt"
+
+    @property
+    def trader_url(self) -> str:
+        """Get the Polymarket profile URL for this trader."""
+        return f"https://polymarket.com/profile/{self.trader_address}"
+
+    @property
+    def transaction_url(self) -> str:
+        """Get the Polygonscan URL for this transaction."""
+        if self.transaction_hash:
+            return f"https://polygonscan.com/tx/{self.transaction_hash}"
+        return ""
 
 
 class PolymarketClient:
@@ -94,7 +114,76 @@ class PolymarketClient:
                 "async with PolymarketClient() as client: ..."
             )
         return self._http_client
-    
+
+    def _get_market_category(self, item: Dict) -> str:
+        """
+        Extract or infer market category from API response.
+
+        Categories: Politics, Crypto, Sports, Finance, Entertainment, Science, World, Other
+        """
+        # Try to get from API tags first
+        tags = item.get("tags", []) or []
+        if isinstance(tags, str):
+            tags = [tags]
+
+        # Map common tags to categories
+        tag_to_category = {
+            "politics": "Politics",
+            "elections": "Politics",
+            "trump": "Politics",
+            "biden": "Politics",
+            "congress": "Politics",
+            "senate": "Politics",
+            "crypto": "Crypto",
+            "bitcoin": "Crypto",
+            "ethereum": "Crypto",
+            "btc": "Crypto",
+            "eth": "Crypto",
+            "sports": "Sports",
+            "nfl": "Sports",
+            "nba": "Sports",
+            "mlb": "Sports",
+            "soccer": "Sports",
+            "football": "Sports",
+            "finance": "Finance",
+            "stocks": "Finance",
+            "fed": "Finance",
+            "interest": "Finance",
+            "economy": "Finance",
+            "entertainment": "Entertainment",
+            "oscars": "Entertainment",
+            "movies": "Entertainment",
+            "science": "Science",
+            "ai": "Science",
+            "tech": "Science",
+            "world": "World",
+            "war": "World",
+            "international": "World",
+        }
+
+        for tag in tags:
+            tag_lower = tag.lower()
+            if tag_lower in tag_to_category:
+                return tag_to_category[tag_lower]
+
+        # Infer from question text if no tags match
+        question = (item.get("question", "") or "").lower()
+        category_keywords = {
+            "Politics": ["trump", "biden", "election", "president", "congress", "senate", "vote", "democrat", "republican", "governor", "mayor"],
+            "Crypto": ["bitcoin", "btc", "ethereum", "eth", "crypto", "token", "blockchain", "solana", "dogecoin"],
+            "Sports": ["nfl", "nba", "mlb", "nhl", "super bowl", "world series", "championship", "playoff", "win on", "vs", "match"],
+            "Finance": ["stock", "s&p", "nasdaq", "fed", "interest rate", "inflation", "gdp", "recession", "market"],
+            "Entertainment": ["oscar", "grammy", "emmy", "movie", "album", "celebrity", "twitter", "tweet", "elon"],
+            "Science": ["ai ", "openai", "climate", "fda", "vaccine", "space", "nasa"],
+            "World": ["war", "ukraine", "russia", "china", "iran", "israel", "military", "invasion"],
+        }
+
+        for category, keywords in category_keywords.items():
+            if any(kw in question for kw in keywords):
+                return category
+
+        return "Other"
+
     # =========================================
     # MARKET DATA METHODS
     # =========================================
@@ -155,6 +244,9 @@ class PolymarketClient:
                     if "Yes" not in outcome_prices:
                         outcome_prices = {"Yes": 0.5, "No": 0.5}
 
+                    # Get category from tags or infer from question
+                    category = self._get_market_category(item)
+
                     market = Market(
                         id=item.get("conditionId", item.get("id", "")),
                         question=item.get("question", ""),
@@ -163,7 +255,8 @@ class PolymarketClient:
                         volume=float(item.get("volume", 0) or 0),
                         liquidity=float(item.get("liquidity", 0) or 0),
                         end_date=None,
-                        active=item.get("active", True) and not item.get("closed", False)
+                        active=item.get("active", True) and not item.get("closed", False),
+                        category=category,
                     )
                     markets.append(market)
                 except (KeyError, ValueError, IndexError, json.JSONDecodeError) as e:
@@ -185,7 +278,9 @@ class PolymarketClient:
             )
             response.raise_for_status()
             item = response.json()
-            
+
+            category = self._get_market_category(item)
+
             return Market(
                 id=item.get("conditionId", market_id),
                 question=item.get("question", ""),
@@ -197,7 +292,8 @@ class PolymarketClient:
                 volume=float(item.get("volume", 0) or 0),
                 liquidity=float(item.get("liquidity", 0) or 0),
                 end_date=None,
-                active=item.get("active", True)
+                active=item.get("active", True),
+                category=category,
             )
         except httpx.HTTPError as e:
             logger.error(f"Failed to fetch market {market_id}: {e}")

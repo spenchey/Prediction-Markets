@@ -247,6 +247,8 @@ class WhaleAlert:
     market_question: Optional[str] = None  # What market is this
     is_sports_market: bool = False  # For filtering out sports
     z_score: Optional[float] = None  # Statistical significance
+    market_url: Optional[str] = None  # Link to market page
+    category: str = "Other"  # Politics, Crypto, Sports, Finance, etc.
 
     def to_dict(self) -> Dict:
         """Convert to dictionary for JSON/database storage."""
@@ -340,8 +342,10 @@ class WhaleDetector:
         # Track per-market statistics for market anomaly detection
         self.market_stats: Dict[str, Dict] = {}  # market_id -> {trades: [], mean, std}
 
-        # Market question cache
-        self.market_questions: Dict[str, str] = {}
+        # Market info caches
+        self.market_questions: Dict[str, str] = {}  # market_id -> question text
+        self.market_urls: Dict[str, str] = {}  # market_id -> URL
+        self.market_categories: Dict[str, str] = {}  # market_id -> category
 
         # NEW: Market prices cache (for contrarian/extreme confidence detection)
         self.market_prices: Dict[str, Dict[str, float]] = {}  # market_id -> {"Yes": 0.65, "No": 0.35}
@@ -752,9 +756,13 @@ class WhaleDetector:
         if self.exclude_sports and is_sports:
             return []
 
-        # Cache market question
+        # Cache market info
         if market_question:
             self.market_questions[trade.market_id] = market_question
+
+        # Get market URL and category from cache or default
+        market_url = self.market_urls.get(trade.market_id)
+        market_category = self.market_categories.get(trade.market_id, "Other")
 
         # Update wallet profile (includes velocity tracking)
         profile = self._update_wallet_profile(trade, market_question)
@@ -799,6 +807,8 @@ class WhaleDetector:
                 trade_size_percentile=self._calculate_percentile(trade.amount_usd),
                 market_question=market_question,
                 is_sports_market=is_sports,
+                market_url=market_url,
+                category=market_category,
             ))
 
         # 2. Statistically unusual trade (global)
@@ -817,6 +827,8 @@ class WhaleDetector:
                 market_question=market_question,
                 is_sports_market=is_sports,
                 z_score=z_score,
+                market_url=market_url,
+                category=market_category,
             ))
 
         # 3. Market-specific anomaly (from ChatGPT MVP)
@@ -835,6 +847,8 @@ class WhaleDetector:
                     market_question=market_question,
                     is_sports_market=is_sports,
                     z_score=market_z,
+                    market_url=market_url,
+                    category=market_category,
                 ))
 
         # 4. New wallet making significant trade
@@ -850,6 +864,8 @@ class WhaleDetector:
                 message=f"🆕 NEW WALLET: First-time trader placed ${trade.amount_usd:,.0f} bet (only {profile.total_trades} trades)",
                 market_question=market_question,
                 is_sports_market=is_sports,
+                market_url=market_url,
+                category=market_category,
             ))
 
         # 5. Focused wallet making big trade (from ChatGPT MVP)
@@ -865,6 +881,8 @@ class WhaleDetector:
                 message=f"🎯 FOCUSED WALLET: Wallet concentrated in {len(profile.markets_traded)} markets placed ${trade.amount_usd:,.0f} bet",
                 market_question=market_question,
                 is_sports_market=is_sports,
+                market_url=market_url,
+                category=market_category,
             ))
 
         # 6. Smart money (high win-rate wallet) making a trade
@@ -880,6 +898,8 @@ class WhaleDetector:
                 message=f"🧠 SMART MONEY: Wallet with {profile.win_rate:.0%} win rate placed ${trade.amount_usd:,.0f} bet",
                 market_question=market_question,
                 is_sports_market=is_sports,
+                market_url=market_url,
+                category=market_category,
             ))
 
         # ==========================================
@@ -899,6 +919,8 @@ class WhaleDetector:
                 message=f"🔄 REPEAT ACTOR: Wallet made {profile.trades_last_hour} trades in last hour (${trade.amount_usd:,.0f} this trade)",
                 market_question=market_question,
                 is_sports_market=is_sports,
+                market_url=market_url,
+                category=market_category,
             ))
 
         # 8. Heavy Actor Detection (5+ trades in 24 hours)
@@ -914,6 +936,8 @@ class WhaleDetector:
                 message=f"⚡ HEAVY ACTOR: Wallet made {profile.trades_last_24h} trades in 24h (${profile.total_volume_usd:,.0f} total volume)",
                 market_question=market_question,
                 is_sports_market=is_sports,
+                market_url=market_url,
+                category=market_category,
             ))
 
         # 9. Extreme Confidence Detection (>95% or <5% probability bets)
@@ -939,6 +963,8 @@ class WhaleDetector:
                 message=f"{emoji} EXTREME CONFIDENCE: ${trade.amount_usd:,.0f} bet on {desc}",
                 market_question=market_question,
                 is_sports_market=is_sports,
+                market_url=market_url,
+                category=market_category,
             ))
 
         # 10. Whale Exit Detection (large sells)
@@ -956,6 +982,8 @@ class WhaleDetector:
                     message=f"🚪 WHALE EXIT: Wallet selling ${trade.amount_usd:,.0f} (prev bought ${profile.buy_volume_usd:,.0f})",
                     market_question=market_question,
                     is_sports_market=is_sports,
+                    market_url=market_url,
+                    category=market_category,
                 ))
 
         # 11. Contrarian Activity Detection (betting against consensus)
@@ -972,6 +1000,8 @@ class WhaleDetector:
                 message=f"🔮 CONTRARIAN: ${trade.amount_usd:,.0f} bet on {prob:.0%} underdog outcome",
                 market_question=market_question,
                 is_sports_market=is_sports,
+                market_url=market_url,
+                category=market_category,
             ))
 
         # 12. Cluster Activity Detection (coordinated wallets)
@@ -988,6 +1018,8 @@ class WhaleDetector:
                 message=f"🕸️ CLUSTER DETECTED: {len(cluster_wallets)} wallets trading same market within {self.cluster_time_window.seconds // 60}min",
                 market_question=market_question,
                 is_sports_market=is_sports,
+                market_url=market_url,
+                category=market_category,
             ))
 
         # ==========================================
@@ -1008,6 +1040,8 @@ class WhaleDetector:
                 message=f"💥 HIGH IMPACT: ${trade.amount_usd:,.0f} is {impact_ratio:.0%} of market's hourly volume",
                 market_question=market_question,
                 is_sports_market=is_sports,
+                market_url=market_url,
+                category=market_category,
             ))
 
         # 14. Entity Activity Detection (multi-wallet entity trading)
@@ -1024,6 +1058,8 @@ class WhaleDetector:
                 message=f"👥 ENTITY DETECTED: Wallet is part of {entity.wallet_count}-wallet entity (conf: {entity.confidence:.0%})",
                 market_question=market_question,
                 is_sports_market=is_sports,
+                market_url=market_url,
+                category=market_category,
             ))
 
         return alerts
@@ -1229,8 +1265,10 @@ class TradeMonitor:
         self.total_alerts_generated = 0
         self.last_check_time: Optional[datetime] = None
 
-        # Market question cache
-        self._market_cache: Dict[str, str] = {}
+        # Market info caches
+        self._market_cache: Dict[str, str] = {}  # market_id -> question
+        self._market_url_cache: Dict[str, str] = {}  # market_id -> URL
+        self._market_category_cache: Dict[str, str] = {}  # market_id -> category
 
     async def start(self):
         """Start the monitoring loop."""
@@ -1254,8 +1292,8 @@ class TradeMonitor:
         logger.info(f"   Total trades processed: {self.total_trades_processed}")
         logger.info(f"   Total alerts generated: {self.total_alerts_generated}")
 
-    async def _fetch_market_questions(self, market_ids: Set[str]) -> Dict[str, str]:
-        """Fetch market questions for a set of market IDs."""
+    async def _fetch_market_info(self, market_ids: Set[str]) -> Dict[str, str]:
+        """Fetch market info (questions, URLs, categories) for a set of market IDs."""
         questions = {}
 
         # Return cached values first
@@ -1267,6 +1305,12 @@ class TradeMonitor:
                     markets = await client.get_active_markets(limit=200)
                     for market in markets:
                         self._market_cache[market.id] = market.question
+                        self._market_url_cache[market.id] = market.url
+                        self._market_category_cache[market.id] = market.category
+                        # Also update detector's caches
+                        self.detector.market_questions[market.id] = market.question
+                        self.detector.market_urls[market.id] = market.url
+                        self.detector.market_categories[market.id] = market.category
             except Exception as e:
                 logger.warning(f"Failed to fetch market info: {e}")
 
@@ -1300,9 +1344,9 @@ class TradeMonitor:
             # Remove oldest half
             self.seen_trades = set(list(self.seen_trades)[-25_000:])
 
-        # Fetch market questions for context and filtering
+        # Fetch market info for context and filtering
         market_ids = {t.market_id for t in new_trades}
-        market_questions = await self._fetch_market_questions(market_ids)
+        market_questions = await self._fetch_market_info(market_ids)
 
         # Analyze for alerts
         alerts = await self.detector.analyze_trades(new_trades, market_questions)

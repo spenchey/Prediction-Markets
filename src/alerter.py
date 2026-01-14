@@ -42,6 +42,9 @@ class AlertMessage:
     timestamp: datetime
     platform: str = "Polymarket"  # Platform: Polymarket, Kalshi, PredictIt
     side: str = "buy"  # buy or sell
+    category: str = "Other"  # Politics, Crypto, Sports, Finance, etc.
+    market_url: Optional[str] = None  # Link to market page
+    trader_url: Optional[str] = None  # Link to trader profile
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -60,11 +63,13 @@ class AlertMessage:
     def to_plain_text(self) -> str:
         market_info = self.market_question or "Unknown Market"
         action = self.side.capitalize() if self.side else "Traded"
+        market_link = f"\n🔗 Link: {self.market_url}" if self.market_url else ""
         return f"""🚨 {self.title}
 
 {self.message}
 
-📊 Market: {market_info}
+📊 Market: {market_info}{market_link}
+🏷️ Category: {self.category}
 🏦 Platform: {self.platform}
 💰 Amount: ${self.trade_amount:,.2f}
 🎯 Position: {action} {self.outcome}
@@ -200,14 +205,39 @@ class DiscordAlert(AlertChannel):
             if severity_explanation:
                 severity_text += f"\n_{severity_explanation}_"
 
+            # Market with link (Discord markdown)
+            market_text = alert.market_question or "Unknown Market"
+            if alert.market_url:
+                market_text = f"[{market_text}]({alert.market_url})"
+
+            # Trader with link to profile
+            trader_short = f"{alert.trader_address[:20]}..."
+            if alert.trader_url:
+                trader_text = f"[`{trader_short}`]({alert.trader_url})"
+            else:
+                trader_text = f"`{trader_short}`"
+
+            # Category emoji
+            category_emoji = {
+                "Politics": "🏛️",
+                "Crypto": "₿",
+                "Sports": "⚽",
+                "Finance": "📈",
+                "Entertainment": "🎬",
+                "Science": "🔬",
+                "World": "🌍",
+                "Other": "📌",
+            }.get(alert.category, "📌")
+
             # Build fields - market question is always first and prominent
             fields = [
-                {"name": "📊 Market", "value": alert.market_question or "Unknown Market", "inline": False},
+                {"name": "📊 Market", "value": market_text, "inline": False},
+                {"name": f"{category_emoji} Category", "value": alert.category, "inline": True},
                 {"name": "🏦 Platform", "value": alert.platform, "inline": True},
                 {"name": "💰 Amount", "value": f"${alert.trade_amount:,.2f}", "inline": True},
                 {"name": "🎯 Position", "value": position_text, "inline": True},
                 {"name": "⚡ Severity", "value": severity_text, "inline": False},
-                {"name": "👤 Trader", "value": f"`{alert.trader_address[:30]}...`", "inline": False},
+                {"name": "👤 Trader", "value": trader_text, "inline": False},
             ]
 
             payload = {
@@ -217,7 +247,7 @@ class DiscordAlert(AlertChannel):
                     "color": color,
                     "fields": fields,
                     "timestamp": alert.timestamp.isoformat(),
-                    "footer": {"text": f"Whale Tracker • {alert.platform}"}
+                    "footer": {"text": f"Whale Tracker • {alert.platform} • {alert.category}"}
                 }],
                 "username": "Whale Tracker"
             }
@@ -408,7 +438,7 @@ class Alerter:
     def get_channels(self) -> List[str]:
         return [c.name for c in self.channels]
     
-    async def send_alert(self, whale_alert, market_question: str = None) -> Dict[str, bool]:
+    async def send_alert(self, whale_alert, market_question: str = None, market_url: str = None, category: str = None) -> Dict[str, bool]:
         # Get market question - use passed value, alert value, or fallback
         mkt_question = market_question or getattr(whale_alert, 'market_question', None)
         if not mkt_question:
@@ -416,6 +446,15 @@ class Alerter:
 
         # Get platform from trade (defaults to Polymarket)
         platform = getattr(whale_alert.trade, 'platform', 'Polymarket')
+
+        # Get market URL and category
+        mkt_url = market_url or getattr(whale_alert, 'market_url', None)
+        mkt_category = category or getattr(whale_alert, 'category', 'Other')
+
+        # Get trader URL from trade
+        trader_url = getattr(whale_alert.trade, 'trader_url', None)
+        if not trader_url and whale_alert.trade.trader_address:
+            trader_url = f"https://polymarket.com/profile/{whale_alert.trade.trader_address}"
 
         message = AlertMessage(
             title=whale_alert.alert_type.replace('_', ' ').title(),
@@ -430,6 +469,9 @@ class Alerter:
             timestamp=whale_alert.timestamp,
             platform=platform,
             side=whale_alert.trade.side,
+            category=mkt_category,
+            market_url=mkt_url,
+            trader_url=trader_url,
         )
         
         results = {}
