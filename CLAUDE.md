@@ -331,24 +331,18 @@ Tracks whether a trade is opening, adding to, or closing a position:
 ### Overview
 Kalshi is a CFTC-regulated US prediction market exchange. Integration added to track both Polymarket and Kalshi markets.
 
-### Current Status: PARTIAL
+### Current Status: FULL (with auth)
 - ✅ Market data (prices, volume, open interest)
-- ❌ Trade data (requires authentication)
+- ✅ Trade data (requires RSA authentication)
 
-### Why Trade Data is Limited
-The **Kalshi public elections API** (`api.elections.kalshi.com`) only provides market data. Trade-level data requires:
-1. API key from Kalshi dashboard
-2. RSA private key for request signing
-3. Authentication on every request
-
-Even WITH authentication, Kalshi trades do NOT expose trader identities (unlike Polymarket's blockchain transparency).
+Note: Kalshi trades do NOT expose trader identities (unlike Polymarket's blockchain transparency).
 
 ### Files Added/Changed
-- `src/kalshi_client.py` - KalshiClient for public elections API
+- `src/kalshi_client.py` - KalshiClient with RSA-PSS authentication
 - `src/whale_detector.py` - Multi-platform TradeMonitor, anonymous trader detection
 - `src/alerter.py` - Platform-specific URLs, anonymous trader handling
 - `src/main.py` - Initialize both Polymarket + Kalshi clients
-- `src/config.py` - Added `KALSHI_ENABLED` setting
+- `src/config.py` - Added Kalshi settings
 
 ### New API Endpoints
 - `GET /platforms` - Shows enabled platforms and capabilities
@@ -359,23 +353,33 @@ Even WITH authentication, Kalshi trades do NOT expose trader identities (unlike 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `KALSHI_ENABLED` | `true` | Enable/disable Kalshi integration |
+| `KALSHI_API_KEY` | `None` | API key ID from Kalshi dashboard |
+| `KALSHI_PRIVATE_KEY_B64` | `None` | Base64-encoded RSA private key |
 
 ### Anonymous Trader Handling
 Kalshi trades have `trader_address="KALSHI_ANON"`. The whale detector:
 - **Skips** wallet-based alerts: NEW_WALLET, FOCUSED_WALLET, SMART_MONEY, REPEAT_ACTOR, HEAVY_ACTOR, WHALE_EXIT, CLUSTER_ACTIVITY, ENTITY_ACTIVITY
 - **Still fires** trade-based alerts: WHALE_TRADE, UNUSUAL_SIZE, MARKET_ANOMALY, EXTREME_CONFIDENCE, HIGH_IMPACT
 
-### To Enable Full Kalshi Trade Tracking
-Would need to implement authenticated API access:
+### How to Get Kalshi API Credentials
 1. Sign up at https://kalshi.com
 2. Go to Settings → API → Generate API Key
-3. Download RSA private key
-4. Set environment variables:
-   - `KALSHI_API_KEY` - Your API key ID
-   - `KALSHI_PRIVATE_KEY` - Contents of private key (or path)
-5. Implement RSA signing in `kalshi_client.py`
+3. Download RSA private key file (.pem)
+4. Base64 encode the key: `base64 -w 0 < kalshi_private_key.pem`
+5. Set environment variables in Railway:
+   - `KALSHI_API_KEY` - Your API key ID (UUID format)
+   - `KALSHI_PRIVATE_KEY_B64` - Base64-encoded RSA private key
+
+### Technical Details
+- **API Base**: `https://api.elections.kalshi.com/trade-api/v2` (trading API deprecated)
+- **Authentication**: RSA-PSS padding with SHA-256
+- **Signature format**: `timestamp + method + path` (no query params)
+- **Headers**: `KALSHI-ACCESS-KEY`, `KALSHI-ACCESS-TIMESTAMP`, `KALSHI-ACCESS-SIGNATURE`
+- **Trade endpoint**: `/markets/trades` (global endpoint)
 
 See: https://docs.kalshi.com/getting_started/api_keys
 
-### Commit
+### Commits
 - `790f661` - Add Kalshi prediction market integration
+- `d87eb6b` - Add Kalshi authenticated API support for trade fetching
+- `efec456` - Fix timezone-aware datetime comparison error
