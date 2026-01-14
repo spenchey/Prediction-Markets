@@ -33,17 +33,18 @@ class Market:
 
 @dataclass
 class Trade:
-    """Represents a single trade on Polymarket."""
+    """Represents a single trade on a prediction market."""
     id: str
     market_id: str
     trader_address: str  # Wallet address of the trader
-    outcome: str  # "Yes" or "No"
+    outcome: str  # "Yes" or "No" or specific outcome like "Trump", "Biden"
     side: str  # "buy" or "sell"
     size: float  # Number of shares
     price: float  # Price per share (0-1)
     amount_usd: float  # Total USD value of the trade
     timestamp: datetime
     transaction_hash: str
+    platform: str = "Polymarket"  # Platform name: "Polymarket", "Kalshi", "PredictIt"
 
 
 class PolymarketClient:

@@ -20,6 +20,13 @@ from dataclasses import dataclass
 from .config import settings
 
 
+# Severity explanations for users
+SEVERITY_INFO = {
+    "HIGH": "Large trade size, unusual pattern, or high-confidence signal",
+    "MEDIUM": "Notable activity worth monitoring",
+    "LOW": "Minor signal, may be noise"
+}
+
 @dataclass
 class AlertMessage:
     """Standardized alert message for any channel."""
@@ -33,6 +40,8 @@ class AlertMessage:
     market_question: Optional[str]
     outcome: str
     timestamp: datetime
+    platform: str = "Polymarket"  # Platform: Polymarket, Kalshi, PredictIt
+    side: str = "buy"  # buy or sell
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -49,14 +58,18 @@ class AlertMessage:
         }
     
     def to_plain_text(self) -> str:
-        market_info = f"\n📊 Market: {self.market_question[:50]}..." if self.market_question else ""
+        market_info = self.market_question or "Unknown Market"
+        action = self.side.capitalize() if self.side else "Traded"
         return f"""🚨 {self.title}
 
-{self.message}{market_info}
+{self.message}
 
+📊 Market: {market_info}
+🏦 Platform: {self.platform}
 💰 Amount: ${self.trade_amount:,.2f}
-🎯 Outcome: {self.outcome}
-👤 Trader: {self.trader_address[:15]}...
+🎯 Position: {action} {self.outcome}
+⚡ Severity: {self.severity}
+👤 Trader: {self.trader_address[:20]}...
 ⏰ Time: {self.timestamp.strftime('%Y-%m-%d %H:%M:%S')}"""
 
     def to_html(self) -> str:
@@ -175,14 +188,27 @@ class DiscordAlert(AlertChannel):
         try:
             import httpx
             color = {"LOW": 0x4CAF50, "MEDIUM": 0xFFC107, "HIGH": 0xF44336}.get(alert.severity, 0x9E9E9E)
+
+            # Format action: "Bought Yes" or "Sold No"
+            action = alert.side.capitalize() if alert.side else "Traded"
+            position_text = f"{action} **{alert.outcome}**"
+
+            # Severity with explanation
+            severity_emoji = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🔴"}.get(alert.severity, "⚪")
+            severity_explanation = SEVERITY_INFO.get(alert.severity, "")
+            severity_text = f"{severity_emoji} {alert.severity}"
+            if severity_explanation:
+                severity_text += f"\n_{severity_explanation}_"
+
+            # Build fields - market question is always first and prominent
             fields = [
+                {"name": "📊 Market", "value": alert.market_question or "Unknown Market", "inline": False},
+                {"name": "🏦 Platform", "value": alert.platform, "inline": True},
                 {"name": "💰 Amount", "value": f"${alert.trade_amount:,.2f}", "inline": True},
-                {"name": "🎯 Outcome", "value": alert.outcome, "inline": True},
-                {"name": "⚡ Severity", "value": alert.severity, "inline": True},
-                {"name": "👤 Trader", "value": f"`{alert.trader_address[:25]}...`", "inline": False},
+                {"name": "🎯 Position", "value": position_text, "inline": True},
+                {"name": "⚡ Severity", "value": severity_text, "inline": False},
+                {"name": "👤 Trader", "value": f"`{alert.trader_address[:30]}...`", "inline": False},
             ]
-            if alert.market_question:
-                fields.insert(0, {"name": "📊 Market", "value": alert.market_question[:100], "inline": False})
 
             payload = {
                 "embeds": [{
@@ -191,7 +217,7 @@ class DiscordAlert(AlertChannel):
                     "color": color,
                     "fields": fields,
                     "timestamp": alert.timestamp.isoformat(),
-                    "footer": {"text": "Whale Tracker"}
+                    "footer": {"text": f"Whale Tracker • {alert.platform}"}
                 }],
                 "username": "Whale Tracker"
             }
@@ -383,6 +409,14 @@ class Alerter:
         return [c.name for c in self.channels]
     
     async def send_alert(self, whale_alert, market_question: str = None) -> Dict[str, bool]:
+        # Get market question - use passed value, alert value, or fallback
+        mkt_question = market_question or getattr(whale_alert, 'market_question', None)
+        if not mkt_question:
+            mkt_question = f"Market {whale_alert.trade.market_id[:12]}..."  # Fallback
+
+        # Get platform from trade (defaults to Polymarket)
+        platform = getattr(whale_alert.trade, 'platform', 'Polymarket')
+
         message = AlertMessage(
             title=whale_alert.alert_type.replace('_', ' ').title(),
             message=whale_alert.message,
@@ -391,9 +425,11 @@ class Alerter:
             trade_amount=whale_alert.trade.amount_usd,
             trader_address=whale_alert.trade.trader_address,
             market_id=whale_alert.trade.market_id,
-            market_question=market_question or getattr(whale_alert, 'market_question', None),
+            market_question=mkt_question,
             outcome=whale_alert.trade.outcome,
-            timestamp=whale_alert.timestamp
+            timestamp=whale_alert.timestamp,
+            platform=platform,
+            side=whale_alert.trade.side,
         )
         
         results = {}
