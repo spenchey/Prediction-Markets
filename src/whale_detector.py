@@ -61,6 +61,19 @@ SPORTS_KEYWORDS = [
     'olympics', 'world cup', 'euro 2024', 'cricket', 'rugby',
     'f1', 'formula 1', 'nascar', 'indy 500',
     'player prop', 'game total', 'first scorer', 'anytime scorer',
+    # Game matchup patterns
+    ' vs ', ' vs. ', ' @ ',
+    # NBA teams
+    'lakers', 'celtics', 'warriors', 'bulls', 'heat', 'knicks', 'nets', 'suns', 'bucks',
+    'mavericks', 'mavs', 'clippers', 'nuggets', 'grizzlies', 'pelicans', 'thunder', 'rockets',
+    'spurs', 'timberwolves', 'wolves', 'jazz', 'kings', 'blazers', 'trail blazers', 'pacers',
+    'hawks', 'hornets', 'cavaliers', 'cavs', 'pistons', 'raptors', 'wizards', 'magic', '76ers',
+    'sixers',
+    # NFL teams
+    'patriots', 'cowboys', 'eagles', 'chiefs', 'bills', 'dolphins', 'jets', 'ravens', 'steelers',
+    'bengals', 'browns', 'colts', 'texans', 'titans', 'jaguars', 'broncos', 'raiders', 'chargers',
+    'commanders', 'giants', 'packers', 'bears', 'lions', 'vikings', 'saints', 'falcons', 'panthers',
+    'buccaneers', 'bucs', 'cardinals', 'rams', 'seahawks', '49ers', 'niners',
 ]
 
 
