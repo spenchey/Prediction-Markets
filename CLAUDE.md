@@ -683,3 +683,46 @@ DIGEST_TIMEZONE=America/New_York
 
 ### Commits
 - `36559c6` - Add daily email digest with modern design (5 AM ET)
+
+---
+
+## Session Log (2026-01-15) - Consolidated Alert Notifications
+
+### Task: Combine Multiple Alerts Per Trade into Single Message
+
+**Problem**: A single trade could trigger 3+ separate Discord messages (e.g., HIGH_IMPACT, NEW_WALLET, UNUSUAL_SIZE), cluttering the feed.
+
+**Solution**: Consolidated all triggered conditions into ONE alert showing all reasons.
+
+### Implementation
+
+#### Files Changed
+- `src/whale_detector.py` - `WhaleAlert` dataclass updated:
+  - `alert_type` → `alert_types: List[str]`
+  - `message` → `messages: List[str]`
+  - `analyze_trade()` now returns single consolidated alert
+- `src/alerter.py` - `AlertMessage` and Discord formatting updated:
+  - Shows trigger badges and bullet-pointed reasons
+  - Title: "Multi-Signal Alert (3 triggers)" for multiple triggers
+
+#### New Alert Format (Discord)
+```
+🐋 Multi-Signal Alert (3 triggers)
+
+🔔 Triggered: `HIGH IMPACT` `NEW WALLET` `UNUSUAL SIZE`
+
+• 💥 HIGH IMPACT: $1,060 is 100% of market's hourly volume
+• 🆕 NEW WALLET: First-time trader placed $1,060 bet
+• 📊 UNUSUAL TRADE: $1,060 is 13.0 std devs above average
+
+📊 Market: Will Trump nominate...
+🏛️ Category: Politics
+...
+```
+
+#### Backwards Compatibility
+- `alert_type` and `message` properties return first item for DB storage
+- Alert ID prefix changed to `consolidated_{trade_id}`
+
+### Commits
+- `74497f3` - Consolidate multiple alerts per trade into single notification
