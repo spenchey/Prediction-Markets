@@ -119,10 +119,10 @@ class Settings(BaseSettings):
     # ============================================
     # SCHEDULED DIGEST SETTINGS
     # ============================================
-    DAILY_DIGEST_HOUR: int = 8  # Send daily digest at 8 AM
+    DAILY_DIGEST_HOUR: int = 5  # Send daily digest at 5 AM ET
     WEEKLY_DIGEST_DAY: str = "mon"  # Send weekly digest on Monday
-    WEEKLY_DIGEST_HOUR: int = 9  # Send weekly digest at 9 AM
-    DIGEST_TIMEZONE: str = "UTC"  # Timezone for scheduled digests
+    WEEKLY_DIGEST_HOUR: int = 9  # Send weekly digest at 9 AM ET
+    DIGEST_TIMEZONE: str = "America/New_York"  # Eastern Time
 
     # ============================================
     # SUBSCRIPTION SETTINGS

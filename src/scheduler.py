@@ -40,107 +40,138 @@ class DigestReport:
     new_wallets_of_interest: List[Dict]
 
     def to_html(self) -> str:
-        """Generate HTML email content for the digest."""
+        """Generate modern HTML email content (Robinhood/Coinbase style)."""
         period_label = "Daily" if self.report_type == "daily" else "Weekly"
 
-        # Generate top trades table
-        trades_rows = ""
-        for trade in self.top_trades[:10]:
-            trades_rows += f"""
-            <tr>
-                <td style="padding: 8px; border-bottom: 1px solid #eee;">${trade.get('amount', 0):,.0f}</td>
-                <td style="padding: 8px; border-bottom: 1px solid #eee;">{trade.get('market', 'Unknown')[:50]}...</td>
-                <td style="padding: 8px; border-bottom: 1px solid #eee;">{trade.get('outcome', 'N/A')}</td>
-                <td style="padding: 8px; border-bottom: 1px solid #eee;"><code>{trade.get('wallet', '')[:12]}...</code></td>
-            </tr>
+        # Generate top trades cards
+        trade_cards = ""
+        for i, trade in enumerate(self.top_trades[:5]):
+            amount = trade.get('amount', 0)
+            market = (trade.get('market') or 'Unknown Market')[:80]
+            outcome = trade.get('outcome', 'N/A')
+            wallet = (trade.get('wallet') or '')[:12]
+
+            trade_cards += f"""
+            <div style="background: #ffffff; border-radius: 12px; padding: 20px; margin-bottom: 12px; border: 1px solid #e5e7eb;">
+                <table style="width: 100%; border-collapse: collapse;">
+                    <tr>
+                        <td style="vertical-align: top; padding: 0;">
+                            <div style="font-size: 13px; color: #6b7280; margin-bottom: 4px;">#{i+1} Trade</div>
+                            <div style="font-size: 15px; font-weight: 600; color: #1a1a1a; margin-bottom: 8px; line-height: 1.4;">{market}</div>
+                            <div style="font-size: 13px; color: #6b7280;">
+                                <span style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; display: inline-block;">{outcome}</span>
+                                <span style="margin-left: 8px;">by {wallet}...</span>
+                            </div>
+                        </td>
+                        <td style="vertical-align: top; text-align: right; padding: 0; width: 120px;">
+                            <div style="font-size: 24px; font-weight: 700; color: #00d395;">${amount:,.0f}</div>
+                        </td>
+                    </tr>
+                </table>
+            </div>
             """
 
-        # Generate top wallets table
-        wallets_rows = ""
-        for wallet in self.top_wallets[:10]:
-            win_rate = wallet.get('win_rate')
-            win_rate_str = f"{win_rate:.0%}" if win_rate else "N/A"
-            wallets_rows += f"""
-            <tr>
-                <td style="padding: 8px; border-bottom: 1px solid #eee;"><code>{wallet.get('address', '')[:12]}...</code></td>
-                <td style="padding: 8px; border-bottom: 1px solid #eee;">${wallet.get('volume', 0):,.0f}</td>
-                <td style="padding: 8px; border-bottom: 1px solid #eee;">{wallet.get('trades', 0)}</td>
-                <td style="padding: 8px; border-bottom: 1px solid #eee;">{win_rate_str}</td>
-            </tr>
-            """
+        # Generate alert type pills
+        type_pills = ""
+        for alert_type, count in sorted(self.alerts_by_type.items(), key=lambda x: x[1], reverse=True):
+            formatted_type = alert_type.replace('_', ' ').title()
+            type_pills += f"""<span style="display: inline-block; background: #f3f4f6; padding: 8px 16px; border-radius: 20px; margin: 4px; font-size: 13px; color: #374151;">{formatted_type}: <strong>{count}</strong></span>"""
 
-        # Alert type breakdown
-        alert_breakdown = ""
-        for alert_type, count in self.alerts_by_type.items():
-            alert_breakdown += f"<li>{alert_type}: {count}</li>"
+        # Format dates
+        date_range = f"{self.period_start.strftime('%b %d')} - {self.period_end.strftime('%b %d, %Y')}"
 
         return f"""<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
-    <style>
-        body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-        .container {{ max-width: 700px; margin: 0 auto; padding: 20px; }}
-        .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px 10px 0 0; }}
-        .content {{ background: #fff; padding: 25px; border: 1px solid #ddd; border-top: none; }}
-        .stat-box {{ display: inline-block; width: 30%; text-align: center; padding: 15px; background: #f8f9fa; border-radius: 8px; margin: 5px; }}
-        .stat-number {{ font-size: 24px; font-weight: bold; color: #667eea; }}
-        table {{ width: 100%; border-collapse: collapse; margin: 15px 0; }}
-        th {{ background: #f8f9fa; padding: 12px 8px; text-align: left; font-weight: 600; }}
-        h2 {{ color: #667eea; border-bottom: 2px solid #667eea; padding-bottom: 8px; }}
-        .footer {{ text-align: center; padding: 20px; color: #666; font-size: 12px; }}
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{period_label} Whale Report</title>
 </head>
-<body>
-<div class="container">
-    <div class="header">
-        <h1>🐋 {period_label} Whale Report</h1>
-        <p>{self.period_start.strftime('%b %d')} - {self.period_end.strftime('%b %d, %Y')}</p>
-    </div>
+<body style="margin: 0; padding: 0; background-color: #f8f9fa; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
 
-    <div class="content">
-        <h2>📊 Summary</h2>
-        <div style="text-align: center; margin: 20px 0;">
-            <div class="stat-box">
-                <div class="stat-number">{self.total_alerts}</div>
-                <div>Total Alerts</div>
-            </div>
-            <div class="stat-box">
-                <div class="stat-number">${self.total_volume_tracked:,.0f}</div>
-                <div>Volume Tracked</div>
-            </div>
-            <div class="stat-box">
-                <div class="stat-number">{len(self.smart_money_activity)}</div>
-                <div>Smart Money Moves</div>
+        <!-- Header -->
+        <div style="background: #1a1a1a; border-radius: 16px 16px 0 0; padding: 32px 24px; text-align: center;">
+            <div style="font-size: 40px; margin-bottom: 8px;">&#128011;</div>
+            <h1 style="color: #ffffff; font-size: 24px; font-weight: 700; margin: 0 0 8px 0;">
+                {period_label} Whale Report
+            </h1>
+            <p style="color: #9ca3af; font-size: 14px; margin: 0;">{date_range}</p>
+        </div>
+
+        <!-- Stats Summary -->
+        <div style="background: #ffffff; padding: 24px; border-left: 1px solid #e5e7eb; border-right: 1px solid #e5e7eb;">
+            <table style="width: 100%; border-collapse: collapse; text-align: center;">
+                <tr>
+                    <td style="padding: 0 12px; border-right: 1px solid #e5e7eb; width: 33%;">
+                        <div style="font-size: 32px; font-weight: 700; color: #1a1a1a;">{self.total_alerts}</div>
+                        <div style="font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px;">Alerts</div>
+                    </td>
+                    <td style="padding: 0 12px; border-right: 1px solid #e5e7eb; width: 33%;">
+                        <div style="font-size: 32px; font-weight: 700; color: #00d395;">${self.total_volume_tracked:,.0f}</div>
+                        <div style="font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px;">Volume</div>
+                    </td>
+                    <td style="padding: 0 12px; width: 33%;">
+                        <div style="font-size: 32px; font-weight: 700; color: #1a1a1a;">{len(self.smart_money_activity)}</div>
+                        <div style="font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px;">Smart Money</div>
+                    </td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- Alert Type Breakdown -->
+        <div style="background: #ffffff; padding: 24px; border-left: 1px solid #e5e7eb; border-right: 1px solid #e5e7eb;">
+            <h2 style="font-size: 16px; font-weight: 600; color: #1a1a1a; margin: 0 0 16px 0;">
+                Alert Breakdown
+            </h2>
+            <div style="line-height: 2.2;">
+                {type_pills if type_pills else '<span style="color: #6b7280;">No alerts this period.</span>'}
             </div>
         </div>
 
-        <h2>🚨 Alert Breakdown</h2>
-        <ul>{alert_breakdown}</ul>
+        <!-- Top Trades Section -->
+        <div style="background: #f8f9fa; padding: 24px; border-left: 1px solid #e5e7eb; border-right: 1px solid #e5e7eb;">
+            <h2 style="font-size: 16px; font-weight: 600; color: #1a1a1a; margin: 0 0 16px 0;">
+                Top Trades
+            </h2>
+            {trade_cards if trade_cards else '<p style="color: #6b7280;">No significant trades this period.</p>'}
+        </div>
 
-        <h2>💰 Top Trades This Period</h2>
-        <table>
-            <tr><th>Amount</th><th>Market</th><th>Outcome</th><th>Wallet</th></tr>
-            {trades_rows}
-        </table>
+        <!-- Smart Money & New Wallets -->
+        <div style="background: #ffffff; padding: 24px; border-left: 1px solid #e5e7eb; border-right: 1px solid #e5e7eb;">
+            <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                    <td style="width: 48%; padding-right: 12px; vertical-align: top;">
+                        <div style="background: #f0fdf4; border-radius: 12px; padding: 20px; text-align: center;">
+                            <div style="font-size: 28px; margin-bottom: 8px;">&#129504;</div>
+                            <div style="font-size: 24px; font-weight: 700; color: #15803d;">{len(self.smart_money_activity)}</div>
+                            <div style="font-size: 13px; color: #166534;">Smart Money Trades</div>
+                        </div>
+                    </td>
+                    <td style="width: 48%; padding-left: 12px; vertical-align: top;">
+                        <div style="background: #eff6ff; border-radius: 12px; padding: 20px; text-align: center;">
+                            <div style="font-size: 28px; margin-bottom: 8px;">&#127381;</div>
+                            <div style="font-size: 24px; font-weight: 700; color: #1d4ed8;">{len(self.new_wallets_of_interest)}</div>
+                            <div style="font-size: 13px; color: #1e40af;">New Whale Wallets</div>
+                        </div>
+                    </td>
+                </tr>
+            </table>
+        </div>
 
-        <h2>🏆 Top Wallets</h2>
-        <table>
-            <tr><th>Wallet</th><th>Volume</th><th>Trades</th><th>Win Rate</th></tr>
-            {wallets_rows}
-        </table>
+        <!-- Footer -->
+        <div style="background: #1a1a1a; border-radius: 0 0 16px 16px; padding: 24px; text-align: center;">
+            <p style="color: #9ca3af; font-size: 13px; margin: 0 0 12px 0;">
+                Prediction Market Whale Tracker
+            </p>
+            <div style="font-size: 12px;">
+                <a href="#" style="color: #6b7280; text-decoration: none; margin: 0 8px;">Manage Preferences</a>
+                <span style="color: #374151;">|</span>
+                <a href="#" style="color: #6b7280; text-decoration: none; margin: 0 8px;">Unsubscribe</a>
+            </div>
+        </div>
 
-        <h2>🧠 Smart Money Activity</h2>
-        <p>Wallets with >60% win rate made <strong>{len(self.smart_money_activity)}</strong> trades this period.</p>
-
-        <h2>🆕 New Wallets of Interest</h2>
-        <p>Found <strong>{len(self.new_wallets_of_interest)}</strong> new wallets making significant first trades.</p>
     </div>
-
-    <div class="footer">
-        <p>Prediction Market Whale Tracker | <a href="#">Manage Preferences</a> | <a href="#">Unsubscribe</a></p>
-    </div>
-</div>
 </body>
 </html>
 """
@@ -339,6 +370,58 @@ class DigestScheduler:
             new_wallets_of_interest=new_wallets
         )
 
+    async def _compile_digest_from_db(self, hours_back: int) -> Optional[DigestReport]:
+        """
+        Compile a digest report from database alerts.
+
+        Falls back to in-memory if database unavailable.
+        """
+        if not self.database:
+            logger.warning("No database available, falling back to in-memory digest")
+            return self._compile_digest(hours_back)
+
+        try:
+            end_time = datetime.now()
+            start_time = end_time - timedelta(hours=hours_back)
+
+            # Query database for summary
+            summary = await self.database.get_digest_summary(start_time, end_time)
+
+            if summary["total_alerts"] == 0:
+                return None
+
+            # Get top wallets from detector (still uses in-memory)
+            top_wallets = []
+            if self.detector:
+                for profile in self.detector.get_top_wallets(10, non_sports_only=True):
+                    top_wallets.append({
+                        "address": profile.address,
+                        "volume": profile.total_volume_usd,
+                        "trades": profile.total_trades,
+                        "win_rate": profile.win_rate
+                    })
+
+            # Count smart money and new wallet alerts
+            smart_money_count = summary["alerts_by_type"].get("SMART_MONEY", 0)
+            new_wallet_count = summary["alerts_by_type"].get("NEW_WALLET", 0)
+
+            return DigestReport(
+                report_type="daily" if hours_back <= 24 else "weekly",
+                period_start=start_time,
+                period_end=end_time,
+                total_alerts=summary["total_alerts"],
+                alerts_by_type=summary["alerts_by_type"],
+                total_volume_tracked=summary["total_volume"],
+                top_trades=summary["top_trades"],
+                top_wallets=top_wallets,
+                smart_money_activity=[{}] * smart_money_count,  # Placeholder for count
+                new_wallets_of_interest=[{}] * new_wallet_count  # Placeholder for count
+            )
+
+        except Exception as e:
+            logger.error(f"Database digest failed, falling back to in-memory: {e}")
+            return self._compile_digest(hours_back)
+
     async def send_daily_digest(self, subscriber_emails: List[str] = None):
         """
         Send daily digest email to subscribers.
@@ -348,9 +431,10 @@ class DigestScheduler:
         """
         logger.info("📧 Compiling daily digest...")
 
-        digest = self._compile_digest(hours_back=24)
+        # Use database-backed digest (falls back to in-memory if unavailable)
+        digest = await self._compile_digest_from_db(hours_back=24)
 
-        if digest.total_alerts == 0:
+        if digest is None or digest.total_alerts == 0:
             logger.info("No alerts in past 24 hours, skipping daily digest")
             return
 
@@ -375,9 +459,10 @@ class DigestScheduler:
         """
         logger.info("📧 Compiling weekly digest...")
 
-        digest = self._compile_digest(hours_back=168)  # 7 days
+        # Use database-backed digest (falls back to in-memory if unavailable)
+        digest = await self._compile_digest_from_db(hours_back=168)  # 7 days
 
-        if digest.total_alerts == 0:
+        if digest is None or digest.total_alerts == 0:
             logger.info("No alerts in past week, skipping weekly digest")
             return
 

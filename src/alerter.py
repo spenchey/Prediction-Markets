@@ -542,6 +542,68 @@ class Alerter:
         logger.info(f"📢 Alert sent to {success}/{len(self.channels)} channels")
         return results
 
+    async def send_digest(
+        self,
+        subject: str,
+        html_content: str,
+        text_content: str,
+        to_email: str = None
+    ) -> bool:
+        """
+        Send a digest email via the Email channel.
+
+        Args:
+            subject: Email subject line
+            html_content: HTML body of the email
+            text_content: Plain text fallback
+            to_email: Override recipient (uses ALERT_EMAIL if not provided)
+
+        Returns:
+            True if sent successfully, False otherwise
+        """
+        # Find the email channel
+        email_channel = None
+        for channel in self.channels:
+            if channel.name == "Email":
+                email_channel = channel
+                break
+
+        if not email_channel or not email_channel.is_configured():
+            logger.warning("Email channel not configured, skipping digest")
+            return False
+
+        try:
+            import httpx
+            recipient = to_email or email_channel.to_email
+
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    "https://api.resend.com/emails",
+                    headers={
+                        "Authorization": f"Bearer {email_channel.api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "from": settings.FROM_EMAIL,
+                        "to": [recipient],
+                        "subject": subject,
+                        "html": html_content,
+                        "text": text_content,
+                    },
+                    timeout=30.0
+                )
+
+                if response.status_code == 200:
+                    logger.info(f"📧 Digest email sent to {recipient}")
+                    return True
+                else:
+                    logger.error(f"Digest email failed: {response.status_code} - {response.text}")
+                    return False
+
+        except Exception as e:
+            logger.error(f"Error sending digest email: {e}")
+            return False
+
 
 def create_default_alerter() -> Alerter:
     """Create alerter with all configured channels."""

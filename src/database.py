@@ -351,7 +351,86 @@ class Database:
                 .limit(limit)
             )
             return result.scalars().all()
-    
+
+    async def get_alerts_by_date_range(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        limit: int = 1000
+    ) -> List[AlertRecord]:
+        """
+        Get alerts within a specific date range.
+
+        Args:
+            start_time: Start of the date range (inclusive)
+            end_time: End of the date range (inclusive)
+            limit: Maximum number of alerts to return
+
+        Returns:
+            List of AlertRecord objects ordered by created_at DESC
+        """
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(AlertRecord)
+                .where(AlertRecord.created_at >= start_time)
+                .where(AlertRecord.created_at <= end_time)
+                .order_by(desc(AlertRecord.created_at))
+                .limit(limit)
+            )
+            return result.scalars().all()
+
+    async def get_digest_summary(
+        self,
+        start_time: datetime,
+        end_time: datetime
+    ) -> dict:
+        """
+        Get aggregated summary data for digest email.
+
+        Returns dict with:
+        - total_alerts: int
+        - alerts_by_type: dict
+        - alerts_by_severity: dict
+        - total_volume: float
+        - top_trades: list (top 10 by amount)
+        - all_alerts: list
+        """
+        alerts = await self.get_alerts_by_date_range(start_time, end_time)
+
+        alerts_by_type = {}
+        alerts_by_severity = {}
+        total_volume = 0.0
+
+        for alert in alerts:
+            # Count by type
+            alerts_by_type[alert.alert_type] = alerts_by_type.get(alert.alert_type, 0) + 1
+            # Count by severity
+            alerts_by_severity[alert.severity] = alerts_by_severity.get(alert.severity, 0) + 1
+            # Sum volume
+            total_volume += alert.trade_amount_usd or 0.0
+
+        # Get top trades (sorted by amount)
+        top_trades = sorted(alerts, key=lambda a: a.trade_amount_usd or 0, reverse=True)[:10]
+
+        return {
+            "total_alerts": len(alerts),
+            "alerts_by_type": alerts_by_type,
+            "alerts_by_severity": alerts_by_severity,
+            "total_volume": total_volume,
+            "top_trades": [
+                {
+                    "amount": a.trade_amount_usd,
+                    "market": a.market_question,
+                    "outcome": a.outcome,
+                    "wallet": a.trader_address,
+                    "alert_type": a.alert_type,
+                    "severity": a.severity,
+                }
+                for a in top_trades
+            ],
+            "all_alerts": alerts,
+        }
+
     # =========================================
     # WALLET OPERATIONS
     # =========================================

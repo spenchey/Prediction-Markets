@@ -31,6 +31,7 @@ from .polymarket_client import PolymarketClient, Market
 from .kalshi_client import KalshiClient
 from .whale_detector import WhaleDetector, WhaleAlert, TradeMonitor
 from .alerter import Alerter, create_default_alerter
+from .scheduler import DigestScheduler, create_digest_scheduler
 
 # =========================================
 # CONFIGURE LOGGING
@@ -53,6 +54,7 @@ detector: Optional[WhaleDetector] = None
 monitor: Optional[TradeMonitor] = None
 monitor_task: Optional[asyncio.Task] = None
 alerter: Optional[Alerter] = None
+digest_scheduler: Optional[DigestScheduler] = None
 
 # Store recent alerts in memory for quick access
 recent_alerts: List[WhaleAlert] = []
@@ -152,7 +154,7 @@ async def lifespan(app: FastAPI):
     - On startup: Initialize database, alerter, start monitoring
     - On shutdown: Clean up resources
     """
-    global db, detector, monitor, monitor_task, alerter
+    global db, detector, monitor, monitor_task, alerter, digest_scheduler
 
     logger.info("🚀 Starting Prediction Market Tracker...")
     logger.info(f"📊 DATABASE_URL configured: {'Yes' if settings.DATABASE_URL else 'No'}")
@@ -223,9 +225,22 @@ async def lifespan(app: FastAPI):
             logger.warning("⚠️ Trade monitor not started - detector not available")
     except Exception as e:
         logger.error(f"❌ Trade monitor initialization failed: {e}")
-    
+
+    # Initialize digest scheduler
+    try:
+        if alerter and detector and db:
+            digest_scheduler = create_digest_scheduler(alerter, detector, db)
+            digest_scheduler.start()
+            logger.info("✅ Digest scheduler started")
+            logger.info(f"   Daily digest: {settings.DAILY_DIGEST_HOUR}:00 AM {settings.DIGEST_TIMEZONE}")
+        else:
+            logger.warning("⚠️ Digest scheduler not started - missing dependencies")
+    except Exception as e:
+        logger.error(f"❌ Digest scheduler initialization failed: {e}")
+        digest_scheduler = None
+
     logger.info("🎉 Application ready!")
-    
+
     yield  # Application runs here
     
     # Shutdown
@@ -241,9 +256,12 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
     
+    if digest_scheduler:
+        digest_scheduler.stop()
+
     if db:
         await db.close()
-    
+
     logger.info("👋 Goodbye!")
 
 
@@ -880,18 +898,130 @@ async def get_wallet_entity(wallet_address: str):
 async def manual_scan():
     """
     Manually trigger a scan for new trades.
-    
+
     Useful for testing without waiting for the polling interval.
     """
     if not monitor:
         raise HTTPException(status_code=500, detail="Monitor not initialized")
-    
+
     await monitor._check_for_trades()
-    
+
     return {
         "status": "scan_complete",
         "alerts_generated": len(recent_alerts)
     }
+
+
+# =========================================
+# DIGEST ENDPOINTS
+# =========================================
+
+@app.post("/digest/daily")
+async def trigger_daily_digest():
+    """
+    Manually trigger the daily digest email.
+
+    Useful for testing without waiting for 5 AM.
+    """
+    if not digest_scheduler:
+        raise HTTPException(status_code=500, detail="Digest scheduler not initialized")
+
+    try:
+        await digest_scheduler.send_daily_digest()
+        return {
+            "status": "success",
+            "message": "Daily digest sent (if alerts exist)"
+        }
+    except Exception as e:
+        logger.error(f"Failed to send digest: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to send digest: {str(e)}")
+
+
+@app.post("/digest/weekly")
+async def trigger_weekly_digest():
+    """
+    Manually trigger the weekly digest email.
+
+    Useful for testing the weekly report.
+    """
+    if not digest_scheduler:
+        raise HTTPException(status_code=500, detail="Digest scheduler not initialized")
+
+    try:
+        await digest_scheduler.send_weekly_digest()
+        return {
+            "status": "success",
+            "message": "Weekly digest sent (if alerts exist)"
+        }
+    except Exception as e:
+        logger.error(f"Failed to send digest: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to send digest: {str(e)}")
+
+
+@app.get("/digest/preview")
+async def preview_digest(hours: int = Query(24, ge=1, le=168)):
+    """
+    Preview digest content without sending email.
+
+    Returns the compiled digest data for inspection.
+    """
+    if not digest_scheduler:
+        raise HTTPException(status_code=500, detail="Digest scheduler not initialized")
+
+    try:
+        digest = await digest_scheduler._compile_digest_from_db(hours_back=hours)
+
+        if digest is None:
+            return {
+                "status": "empty",
+                "message": f"No alerts in the past {hours} hours",
+                "period_hours": hours
+            }
+
+        return {
+            "status": "success",
+            "period_hours": hours,
+            "report_type": digest.report_type,
+            "period_start": digest.period_start.isoformat(),
+            "period_end": digest.period_end.isoformat(),
+            "total_alerts": digest.total_alerts,
+            "alerts_by_type": digest.alerts_by_type,
+            "total_volume_tracked": digest.total_volume_tracked,
+            "top_trades": digest.top_trades[:5],
+            "smart_money_count": len(digest.smart_money_activity),
+            "new_wallets_count": len(digest.new_wallets_of_interest),
+            "top_wallets_count": len(digest.top_wallets)
+        }
+    except Exception as e:
+        logger.error(f"Failed to preview digest: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to preview digest: {str(e)}")
+
+
+@app.get("/digest/preview/html")
+async def preview_digest_html(hours: int = Query(24, ge=1, le=168)):
+    """
+    Preview digest HTML email template.
+
+    Returns the full HTML that would be sent in the email.
+    """
+    from fastapi.responses import HTMLResponse
+
+    if not digest_scheduler:
+        raise HTTPException(status_code=500, detail="Digest scheduler not initialized")
+
+    try:
+        digest = await digest_scheduler._compile_digest_from_db(hours_back=hours)
+
+        if digest is None:
+            return HTMLResponse(
+                content="<html><body><h1>No alerts in the past {} hours</h1></body></html>".format(hours),
+                status_code=200
+            )
+
+        return HTMLResponse(content=digest.to_html(), status_code=200)
+    except Exception as e:
+        logger.error(f"Failed to preview digest HTML: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to preview digest: {str(e)}")
 
 
 # =========================================
