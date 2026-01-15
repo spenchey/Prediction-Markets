@@ -877,7 +877,7 @@ TWITTER_MAX_PER_HOUR: int = 4
 
 ### Environment Variables Set on Railway
 ```bash
-DISCORD_TWITTER_WEBHOOK_URL=<REDACTED_WEBHOOK>
+DISCORD_TWITTER_WEBHOOK_URL=<set in Railway, do not commit>
 ```
 
 ### Commits
