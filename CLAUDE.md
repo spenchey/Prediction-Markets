@@ -278,18 +278,19 @@ curl -X POST https://web-production-9d2d3.up.railway.app/digest/daily
 
 ## Twitter Queue (Added 2026-01-15)
 
-Semi-automated Twitter/X posting via a private Discord channel. High-value alerts are formatted as tweet-ready text for manual copy/paste to X.
+Semi-automated Twitter/X posting via a private Discord channel. High-value alerts are posted in the **same full format** as the main Discord channels so potential X followers see exactly what subscribers receive.
 
 ### Why Semi-Automated?
 - X API costs $200/month for write access
 - This approach is free and gives you control over what gets posted
 - Rate-limited to ~4 posts/hour to avoid spam
+- Shows real product to potential customers
 
 ### Features
-- **TwitterFormatter** - Generates tweet text with hashtags (< 280 chars)
-- **High-value filtering** - Only alerts meeting criteria are queued
+- **Full alert format** - Same rich embeds as main Discord channels
+- **Hashtags in footer** - Copy entire alert and hashtags come with it
+- **High-value filtering** - Only best alerts are queued
 - **Rate limiting** - Max 4 posts per hour (configurable)
-- **Copy-friendly format** - Discord embeds with code blocks for easy copying
 
 ### Filtering Criteria (must meet at least one)
 - Trade amount >= $1,000
@@ -304,7 +305,7 @@ TWITTER_MIN_AMOUNT=1000        # Minimum USD for Twitter-worthy alerts
 TWITTER_MAX_PER_HOUR=4         # Rate limit
 ```
 
-### Hashtag Strategy
+### Hashtag Strategy (in footer)
 **Evergreen tags** (always included):
 - `#PredictionMarkets` `#WhaleAlert`
 
@@ -312,24 +313,37 @@ TWITTER_MAX_PER_HOUR=4         # Rate limit
 - Politics: `#Politics` `#Election`
 - Crypto: `#Crypto` `#Bitcoin` `#Ethereum`
 - Finance: `#Stocks` `#Finance` `#Markets`
+- Entertainment: `#Entertainment` `#Showbiz`
+- World: `#WorldNews` `#Geopolitics`
 
-**Topic tags** (up to 2, based on market question):
-- `#Trump` `#Biden` `#Elon` `#Tesla` `#SpaceX` `#BTC` `#ETH` etc.
+**Topic tags** (up to 3, based on market question):
+- `#Trump` `#Biden` `#Elon` `#Tesla` `#SpaceX` `#BTC` `#ETH` `#AI` `#OpenAI` etc.
 
-### Example Tweet Format
+### Alert Format in #for-twitter
 ```
-🐋 $5,000 Buy Yes
+🐋 High Impact
 
-📊 Will Trump win the 2028 election?
+💥 HIGH IMPACT: $4,184 is 100% of market's hourly volume
 
-🔔 Multi-Signal Alert (3 triggers)
+📊 Market: Will Trump win the 2028 election?
+🏛️ Category: Politics | 🏦 Platform: Polymarket | 💰 Amount: $4,184.00
+🎯 Position: Buy Yes ➕ ADDING
+⚡ Severity: 🔴 HIGH - Large trade size, unusual pattern, or high-confidence signal
+👤 Trader: 0x1234abcd...
 
-#PredictionMarkets #WhaleAlert #Politics #Trump
+#PredictionMarkets #WhaleAlert #Politics #Election #Trump
 ```
+
+### Workflow
+1. Check #for-twitter channel for high-value alerts
+2. Highlight entire alert → Copy
+3. Paste to X (hashtags included in footer)
+4. Post with optional commentary
 
 ### Discord Channel
 - **Channel**: #for-twitter (private)
 - **Channel ID**: 1461428003056652339
+- **Webhook ID**: 1461428485083107550
 - Only visible to server owner
 
 ---
@@ -784,3 +798,90 @@ DIGEST_TIMEZONE=America/New_York
 
 ### Commits
 - `74497f3` - Consolidate multiple alerts per trade into single notification
+
+---
+
+## Session Log (2026-01-15) - Twitter Queue for X Posting
+
+### Task: Semi-Automated Twitter/X Posting
+
+**Request**: Post high-value alerts to X/Twitter without paying $200/month for API access. User wants to grow a following by showcasing whale alerts.
+
+### Implementation
+
+#### 1. Created Private Discord Channel
+- **Channel**: #for-twitter (private, only owner can see)
+- **Channel ID**: `1461428003056652339`
+- **Webhook ID**: `1461428485083107550`
+- Created via browser automation in Chrome
+
+#### 2. Added TwitterFormatter Class
+**File**: `src/alerter.py`
+
+```python
+class TwitterFormatter:
+    EVERGREEN_TAGS = ["#PredictionMarkets", "#WhaleAlert"]
+    CATEGORY_TAGS = {
+        "Politics": ["#Politics", "#Election"],
+        "Crypto": ["#Crypto", "#Bitcoin", "#Ethereum"],
+        ...
+    }
+    TOPIC_TAGS = {
+        "trump": "#Trump", "bitcoin": "#BTC", "elon": "#Elon", ...
+    }
+
+    @classmethod
+    def get_hashtags(cls, alert) -> str:
+        # Returns: "#PredictionMarkets #WhaleAlert #Politics #Trump"
+
+    @classmethod
+    def is_twitter_worthy(cls, alert, min_amount=1000.0) -> bool:
+        # Returns True if: $1000+ OR HIGH severity OR 3+ triggers
+        # OR contains HIGH_IMPACT, SMART_MONEY, WHALE_TRADE, CLUSTER_ACTIVITY
+```
+
+#### 3. Added TwitterQueueAlert Channel
+**File**: `src/alerter.py`
+
+- Posts to private #for-twitter channel
+- Uses **same full format** as main Discord alerts (not simplified tweets)
+- Hashtags in footer for easy copy/paste
+- Rate limited to 4 posts/hour
+- High-value filtering (only best alerts)
+
+#### 4. Configuration Added
+**File**: `src/config.py`
+
+```python
+DISCORD_TWITTER_WEBHOOK_URL: Optional[str] = None
+TWITTER_MIN_AMOUNT: float = 1000.0
+TWITTER_MAX_PER_HOUR: int = 4
+```
+
+### Workflow for User
+1. Check #for-twitter channel for high-value alerts
+2. Highlight entire alert → Copy (hashtags in footer come with it)
+3. Paste to X with optional commentary
+4. Post
+
+### Key Design Decisions
+- **Full alert format** (not simplified tweets) - Shows potential customers exactly what subscribers receive
+- **Hashtags in footer** - User can copy entire alert naturally, hashtags included
+- **Rate limiting** - Max ~4/hour prevents spam, ensures quality selection
+- **High-value filtering** - Only alerts worth posting get queued
+
+### Files Changed
+- `src/config.py` - Added Twitter queue settings
+- `src/alerter.py` - Added `TwitterFormatter`, `TwitterQueueAlert` classes
+- `CLAUDE.md` - Documentation
+
+### Environment Variables Set on Railway
+```bash
+DISCORD_TWITTER_WEBHOOK_URL=<REDACTED_WEBHOOK>
+```
+
+### Commits
+- `5998888` - Add Twitter Queue for semi-automated X posting
+- `ff5264a` - Twitter Queue: Use same rich format as main Discord alerts
+- `a1ee71a` - Add copy-friendly hashtags field to Twitter Queue alerts
+- `a687bbc` - Move hashtags to footer for easy full-copy to X
