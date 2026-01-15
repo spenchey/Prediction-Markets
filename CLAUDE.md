@@ -545,3 +545,53 @@ After setting environment variables, redeploy:
 ```bash
 railway redeploy -y
 ```
+
+---
+
+## Session Log (2026-01-15) - Sports Filtering & Discord Fix
+
+### Issues Fixed
+
+#### 1. Sports Markets Not Being Filtered
+**Problem**: Sports markets like "Grizzlies vs. Magic" and Kalshi NBA markets (KXNBATOTAL) were getting through.
+
+**Root Causes**:
+- SPORTS_KEYWORDS list didn't include team names or "vs" pattern
+- Kalshi markets have `market_question=None`, only ticker has sport info
+
+**Solution** (commits `5fe6d7a`, `cb7c948`):
+- Added team names (NBA: grizzlies, magic, lakers, etc.)
+- Added NFL team names (cowboys, eagles, chiefs, etc.)
+- Added matchup patterns: ` vs `, ` vs. `, ` @ `
+- `is_sports_market()` now checks BOTH market_question AND market_id/ticker
+- Catches Kalshi tickers like KXNBATOTAL, KXNFL, etc.
+
+#### 2. Discord Alerts Failing (1/2 channels)
+**Problem**: Alerts were only going to Console, Discord was failing silently.
+
+**Root Cause**: Category thread environment variables weren't set on Railway.
+
+**Solution**: Set all category thread IDs on Railway:
+```bash
+DISCORD_THREAD_POLITICS=1461398615242313819
+DISCORD_THREAD_CRYPTO=1461399011373092884
+DISCORD_THREAD_SPORTS=1461403481255579748
+DISCORD_THREAD_FINANCE=1461400496379138271
+DISCORD_THREAD_ENTERTAINMENT=1461400992028299447
+DISCORD_THREAD_WORLD=1461401409709674618
+DISCORD_THREAD_OTHER=1461073799905542420
+```
+
+**Result**: Alerts now show "📢 Alert sent to 2/2 channels" with Discord working.
+
+### Duplicate Discord Threads to Delete
+Two accidental duplicate threads were created:
+- **Politics Alerts duplicate**: `1461398614365569186` (DELETE this)
+- **Sports Alerts duplicate**: `1461403481167368244` (DELETE this)
+
+Keep the thread IDs listed in the category routing table above.
+
+### Commits
+- `106c3e7` - Add $450 min alert threshold and Sports category routing
+- `5fe6d7a` - Improve sports filtering with team names and matchup patterns
+- `cb7c948` - Fix sports filtering for Kalshi markets (check ticker too)
