@@ -550,6 +550,27 @@ class TwitterFormatter:
     }
 
     @classmethod
+    def get_hashtags(cls, alert: AlertMessage) -> str:
+        """Generate relevant hashtags for an alert (for copy/paste)."""
+        tags = list(cls.EVERGREEN_TAGS)
+
+        # Add category tags (up to 2)
+        cat_tags = cls.CATEGORY_TAGS.get(alert.category, [])
+        tags.extend(cat_tags[:2])
+
+        # Add topic tags based on market question (up to 3)
+        market = (alert.market_question or "").lower()
+        topic_tags_added = 0
+        for keyword, tag in cls.TOPIC_TAGS.items():
+            if keyword in market and tag not in tags:
+                tags.append(tag)
+                topic_tags_added += 1
+                if topic_tags_added >= 3:
+                    break
+
+        return " ".join(tags)
+
+    @classmethod
     def format_tweet(cls, alert: AlertMessage) -> str:
         """Generate a tweet-ready string from an alert."""
         # Build the main tweet content
@@ -745,7 +766,10 @@ class TwitterQueueAlert(AlertChannel):
             else:
                 description = alert.messages[0] if alert.messages else ""
 
-            # Build fields - same as main Discord alerts
+            # Generate hashtags for easy copy/paste
+            hashtags = TwitterFormatter.get_hashtags(alert)
+
+            # Build fields - same as main Discord alerts + hashtags for X
             fields = [
                 {"name": "📊 Market", "value": market_text, "inline": False},
                 {"name": f"{category_emoji} Category", "value": alert.category, "inline": True},
@@ -754,6 +778,7 @@ class TwitterQueueAlert(AlertChannel):
                 {"name": "🎯 Position", "value": position_text, "inline": True},
                 {"name": "⚡ Severity", "value": severity_text, "inline": False},
                 {"name": "👤 Trader", "value": trader_text, "inline": False},
+                {"name": "🐦 Copy for X", "value": f"```{hashtags}```", "inline": False},
             ]
 
             payload = {
