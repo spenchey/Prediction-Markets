@@ -766,10 +766,10 @@ class TwitterQueueAlert(AlertChannel):
             else:
                 description = alert.messages[0] if alert.messages else ""
 
-            # Generate hashtags for easy copy/paste
+            # Generate hashtags for footer
             hashtags = TwitterFormatter.get_hashtags(alert)
 
-            # Build fields - same as main Discord alerts + hashtags for X
+            # Build fields - same as main Discord alerts
             fields = [
                 {"name": "📊 Market", "value": market_text, "inline": False},
                 {"name": f"{category_emoji} Category", "value": alert.category, "inline": True},
@@ -778,7 +778,6 @@ class TwitterQueueAlert(AlertChannel):
                 {"name": "🎯 Position", "value": position_text, "inline": True},
                 {"name": "⚡ Severity", "value": severity_text, "inline": False},
                 {"name": "👤 Trader", "value": trader_text, "inline": False},
-                {"name": "🐦 Copy for X", "value": f"```{hashtags}```", "inline": False},
             ]
 
             payload = {
@@ -788,7 +787,7 @@ class TwitterQueueAlert(AlertChannel):
                     "color": color,
                     "fields": fields,
                     "timestamp": alert.timestamp.isoformat(),
-                    "footer": {"text": f"Whale Tracker • {alert.platform} • {alert.category}"}
+                    "footer": {"text": hashtags}
                 }],
                 "username": "Whale Tracker"
             }
