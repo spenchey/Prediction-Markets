@@ -31,9 +31,9 @@ SEVERITY_INFO = {
 class AlertMessage:
     """Standardized alert message for any channel."""
     title: str
-    message: str
+    messages: List[str]  # List of reason messages (consolidated)
     severity: str
-    alert_type: str
+    alert_types: List[str]  # List of triggered alert types
     trade_amount: float
     trader_address: str
     market_id: str
@@ -46,13 +46,26 @@ class AlertMessage:
     market_url: Optional[str] = None  # Link to market page
     trader_url: Optional[str] = None  # Link to trader profile
     position_action: str = "OPENING"  # OPENING, ADDING, CLOSING - trade intent
-    
+
+    # Backwards compatibility properties
+    @property
+    def message(self) -> str:
+        """Primary message for backwards compatibility."""
+        return self.messages[0] if self.messages else ""
+
+    @property
+    def alert_type(self) -> str:
+        """Primary alert type for backwards compatibility."""
+        return self.alert_types[0] if self.alert_types else "UNKNOWN"
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "title": self.title,
             "message": self.message,
+            "messages": self.messages,
             "severity": self.severity,
             "alert_type": self.alert_type,
+            "alert_types": self.alert_types,
             "trade_amount": self.trade_amount,
             "trader_address": self.trader_address,
             "market_id": self.market_id,
@@ -60,15 +73,22 @@ class AlertMessage:
             "outcome": self.outcome,
             "timestamp": self.timestamp.isoformat()
         }
-    
+
     def to_plain_text(self) -> str:
         market_info = self.market_question or "Unknown Market"
         action = self.side.capitalize() if self.side else "Traded"
         market_link = f"\n🔗 Link: {self.market_url}" if self.market_url else ""
         action_emoji = {"OPENING": "🆕", "ADDING": "➕", "CLOSING": "🔚"}.get(self.position_action, "")
+
+        # Format all triggered reasons
+        reasons_text = "\n".join(f"  • {msg}" for msg in self.messages)
+        types_text = " + ".join(t.replace("_", " ").title() for t in self.alert_types)
+
         return f"""🚨 {self.title}
 
-{self.message}
+🔔 Triggered: {types_text}
+
+{reasons_text}
 
 📊 Market: {market_info}{market_link}
 🏷️ Category: {self.category}
@@ -273,6 +293,17 @@ class DiscordAlert(AlertChannel):
                 "Other": "📌",
             }.get(alert.category, "📌")
 
+            # Format consolidated reasons - show all triggers
+            if len(alert.messages) > 1:
+                # Multiple triggers - show all reasons with bullets
+                reasons_text = "\n".join(f"• {msg}" for msg in alert.messages)
+                # Show trigger types as badges
+                trigger_badges = " ".join(f"`{t.replace('_', ' ')}`" for t in alert.alert_types)
+                description = f"**🔔 Triggered:** {trigger_badges}\n\n{reasons_text}"
+            else:
+                # Single trigger - show just the message
+                description = alert.messages[0] if alert.messages else ""
+
             # Build fields - market question is always first and prominent
             fields = [
                 {"name": "📊 Market", "value": market_text, "inline": False},
@@ -287,7 +318,7 @@ class DiscordAlert(AlertChannel):
             payload = {
                 "embeds": [{
                     "title": f"🐋 {alert.title}",
-                    "description": alert.message,
+                    "description": description,
                     "color": color,
                     "fields": fields,
                     "timestamp": alert.timestamp.isoformat(),
@@ -511,11 +542,29 @@ class Alerter:
             else:
                 trader_url = None  # Unknown platform
 
+        # Handle both old single-type and new consolidated multi-type alerts
+        alert_types = getattr(whale_alert, 'alert_types', None)
+        if alert_types is None:
+            # Old format - single alert_type
+            alert_types = [whale_alert.alert_type]
+
+        messages = getattr(whale_alert, 'messages', None)
+        if messages is None:
+            # Old format - single message
+            messages = [whale_alert.message]
+
+        # Generate title based on number of triggers
+        if len(alert_types) == 1:
+            title = alert_types[0].replace('_', ' ').title()
+        else:
+            # Multiple triggers - show count
+            title = f"Multi-Signal Alert ({len(alert_types)} triggers)"
+
         message = AlertMessage(
-            title=whale_alert.alert_type.replace('_', ' ').title(),
-            message=whale_alert.message,
+            title=title,
+            messages=messages,
             severity=whale_alert.severity,
-            alert_type=whale_alert.alert_type,
+            alert_types=alert_types,
             trade_amount=whale_alert.trade.amount_usd,
             trader_address=whale_alert.trade.trader_address,
             market_id=whale_alert.trade.market_id,

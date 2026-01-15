@@ -343,14 +343,15 @@ class WhaleAlert:
     - Granular severity_score (1-10) from ChatGPT MVP
     - is_sports flag for filtering
     - Additional context fields
+    - CONSOLIDATED: Multiple alert types per trade (Jan 2026)
     """
     id: str
-    alert_type: str  # "WHALE_TRADE", "NEW_WALLET", "SMART_MONEY", "FOCUSED_WALLET", etc.
-    severity: str  # "LOW", "MEDIUM", "HIGH" (categorical)
-    severity_score: int  # 1-10 (granular) - from ChatGPT MVP
+    alert_types: List[str]  # List of triggered types: ["WHALE_TRADE", "NEW_WALLET", "HIGH_IMPACT"]
+    severity: str  # "LOW", "MEDIUM", "HIGH" (categorical) - highest among all
+    severity_score: int  # 1-10 (granular) - highest score among all triggers
     trade: Trade
     wallet_profile: Optional[WalletProfile]
-    message: str
+    messages: List[str]  # List of reason messages for each alert type
     timestamp: datetime = field(default_factory=datetime.now)
 
     # Context about why this is interesting
@@ -362,14 +363,27 @@ class WhaleAlert:
     category: str = "Other"  # Politics, Crypto, Sports, Finance, etc.
     position_action: str = "OPENING"  # OPENING, ADDING, CLOSING - what this trade means for their position
 
+    # Backwards compatibility properties
+    @property
+    def alert_type(self) -> str:
+        """Primary alert type (first in list) for backwards compatibility."""
+        return self.alert_types[0] if self.alert_types else "UNKNOWN"
+
+    @property
+    def message(self) -> str:
+        """Primary message (first in list) for backwards compatibility."""
+        return self.messages[0] if self.messages else ""
+
     def to_dict(self) -> Dict:
         """Convert to dictionary for JSON/database storage."""
         return {
             "id": self.id,
-            "alert_type": self.alert_type,
+            "alert_type": self.alert_type,  # Primary type for DB
+            "alert_types": self.alert_types,  # All types
             "severity": self.severity,
             "severity_score": self.severity_score,
-            "message": self.message,
+            "message": self.message,  # Primary message for DB
+            "messages": self.messages,  # All messages
             "timestamp": self.timestamp.isoformat(),
             "trade_id": self.trade.id,
             "trade_amount_usd": self.trade.amount_usd,
@@ -888,8 +902,9 @@ class WhaleDetector:
         """
         Analyze a single trade for unusual activity.
 
-        Returns a list of WhaleAlerts (can return multiple per trade).
-        Enhanced with 11 total detection algorithms.
+        Returns a list with 0 or 1 consolidated WhaleAlert.
+        All triggered conditions are combined into a single alert.
+        Enhanced with 14 total detection algorithms.
         """
         # Check if we should skip sports markets (check both question and ticker)
         is_sports = is_sports_market(market_question, trade.market_id)
@@ -934,8 +949,9 @@ class WhaleDetector:
         # Process through entity engine
         self.process_trade_for_entity(trade)
 
-        # Collect all triggered alerts
-        alerts: List[WhaleAlert] = []
+        # Collect all triggered conditions as (alert_type, message, severity_score)
+        triggered_conditions: List[Tuple[str, str, int]] = []
+        max_z_score = None  # Track highest z-score for context
 
         # ==========================================
         # ORIGINAL DETECTORS (1-6)
@@ -944,43 +960,21 @@ class WhaleDetector:
         # 1. Fixed threshold whale trade
         if trade.amount_usd >= self.whale_threshold_usd:
             severity_score = self._calculate_severity_score(trade, profile, "WHALE_TRADE")
-            severity = score_to_severity(severity_score)
-
-            alerts.append(WhaleAlert(
-                id=f"whale_{trade.id}",
-                alert_type="WHALE_TRADE",
-                severity=severity,
-                severity_score=severity_score,
-                trade=trade,
-                wallet_profile=profile,
-                message=f"🐋 WHALE ALERT: ${trade.amount_usd:,.0f} {trade.side} on {trade.outcome}",
-                trade_size_percentile=self._calculate_percentile(trade.amount_usd),
-                market_question=market_question,
-                is_sports_market=is_sports,
-                market_url=market_url,
-                category=market_category,
-                position_action=position_action,
+            triggered_conditions.append((
+                "WHALE_TRADE",
+                f"🐋 WHALE ALERT: ${trade.amount_usd:,.0f} {trade.side} on {trade.outcome}",
+                severity_score
             ))
 
         # 2. Statistically unusual trade (global)
         is_unusual, z_score = self._is_statistically_unusual(trade.amount_usd)
         if is_unusual and trade.amount_usd < self.whale_threshold_usd:
             severity_score = 6 if z_score < self.std_multiplier + 2 else 8
-            alerts.append(WhaleAlert(
-                id=f"unusual_{trade.id}",
-                alert_type="UNUSUAL_SIZE",
-                severity=score_to_severity(severity_score),
-                severity_score=severity_score,
-                trade=trade,
-                wallet_profile=profile,
-                message=f"📊 UNUSUAL TRADE: ${trade.amount_usd:,.0f} is {z_score:.1f} std devs above average",
-                trade_size_percentile=self._calculate_percentile(trade.amount_usd),
-                market_question=market_question,
-                is_sports_market=is_sports,
-                z_score=z_score,
-                market_url=market_url,
-                category=market_category,
-                position_action=position_action,
+            max_z_score = z_score
+            triggered_conditions.append((
+                "UNUSUAL_SIZE",
+                f"📊 UNUSUAL TRADE: ${trade.amount_usd:,.0f} is {z_score:.1f} std devs above average",
+                severity_score
             ))
 
         # 3. Market-specific anomaly (from ChatGPT MVP)
@@ -988,77 +982,42 @@ class WhaleDetector:
             market_z = (trade.amount_usd - market_mean) / market_std
             if market_z >= self.std_multiplier:
                 severity_score = 7 if market_z < self.std_multiplier + 2 else 9
-                alerts.append(WhaleAlert(
-                    id=f"anomaly_{trade.id}",
-                    alert_type="MARKET_ANOMALY",
-                    severity=score_to_severity(severity_score),
-                    severity_score=severity_score,
-                    trade=trade,
-                    wallet_profile=profile,
-                    message=f"🎯 MARKET ANOMALY: z={market_z:.2f} (market avg ${market_mean:,.0f}, trade ${trade.amount_usd:,.0f})",
-                    market_question=market_question,
-                    is_sports_market=is_sports,
-                    z_score=market_z,
-                    market_url=market_url,
-                    category=market_category,
-                    position_action=position_action,
+                if max_z_score is None or market_z > max_z_score:
+                    max_z_score = market_z
+                triggered_conditions.append((
+                    "MARKET_ANOMALY",
+                    f"🎯 MARKET ANOMALY: z={market_z:.2f} (market avg ${market_mean:,.0f}, trade ${trade.amount_usd:,.0f})",
+                    severity_score
                 ))
 
         # 4. New wallet making significant trade
         # Skip for anonymous traders (platforms that don't expose trader identity)
         if profile.is_new_wallet and trade.amount_usd >= self.new_wallet_threshold_usd and not self._is_anonymous_trader(trade.trader_address):
             severity_score = 8 if trade.amount_usd >= 5000 else 6
-            alerts.append(WhaleAlert(
-                id=f"new_{trade.id}",
-                alert_type="NEW_WALLET",
-                severity=score_to_severity(severity_score),
-                severity_score=severity_score,
-                trade=trade,
-                wallet_profile=profile,
-                message=f"🆕 NEW WALLET: First-time trader placed ${trade.amount_usd:,.0f} bet (only {profile.total_trades} trades)",
-                market_question=market_question,
-                is_sports_market=is_sports,
-                market_url=market_url,
-                category=market_category,
-                position_action=position_action,
+            triggered_conditions.append((
+                "NEW_WALLET",
+                f"🆕 NEW WALLET: First-time trader placed ${trade.amount_usd:,.0f} bet (only {profile.total_trades} trades)",
+                severity_score
             ))
 
         # 5. Focused wallet making big trade (from ChatGPT MVP)
         # Skip for anonymous traders
         if profile.is_focused and trade.amount_usd >= self.focused_wallet_threshold_usd and not self._is_anonymous_trader(trade.trader_address):
             severity_score = 7
-            alerts.append(WhaleAlert(
-                id=f"focused_{trade.id}",
-                alert_type="FOCUSED_WALLET",
-                severity=score_to_severity(severity_score),
-                severity_score=severity_score,
-                trade=trade,
-                wallet_profile=profile,
-                message=f"🎯 FOCUSED WALLET: Wallet concentrated in {len(profile.markets_traded)} markets placed ${trade.amount_usd:,.0f} bet",
-                market_question=market_question,
-                is_sports_market=is_sports,
-                market_url=market_url,
-                category=market_category,
-                position_action=position_action,
+            triggered_conditions.append((
+                "FOCUSED_WALLET",
+                f"🎯 FOCUSED WALLET: Wallet concentrated in {len(profile.markets_traded)} markets placed ${trade.amount_usd:,.0f} bet",
+                severity_score
             ))
 
         # 6. Smart money (high win-rate wallet) making a trade
         # Skip for anonymous traders
         if profile.is_smart_money and trade.amount_usd >= 500 and not self._is_anonymous_trader(trade.trader_address):
             severity_score = 9  # Smart money is always high priority
-            alerts.append(WhaleAlert(
-                id=f"smart_{trade.id}",
-                alert_type="SMART_MONEY",
-                severity="HIGH",
-                severity_score=severity_score,
-                trade=trade,
-                wallet_profile=profile,
-                message=f"🧠 SMART MONEY: Wallet with {profile.win_rate:.0%} win rate placed ${trade.amount_usd:,.0f} bet",
-                market_question=market_question,
-                is_sports_market=is_sports,
-                market_url=market_url,
-                category=market_category,
-                position_action=position_action,
+            triggered_conditions.append((
+                "SMART_MONEY",
+                f"🧠 SMART MONEY: Wallet with {profile.win_rate:.0%} win rate placed ${trade.amount_usd:,.0f} bet",
+                severity_score
             ))
 
         # ==========================================
@@ -1069,38 +1028,20 @@ class WhaleDetector:
         # Skip for anonymous traders
         if profile.is_repeat_actor and trade.amount_usd >= 1000 and not self._is_anonymous_trader(trade.trader_address):
             severity_score = 7
-            alerts.append(WhaleAlert(
-                id=f"repeat_{trade.id}",
-                alert_type="REPEAT_ACTOR",
-                severity=score_to_severity(severity_score),
-                severity_score=severity_score,
-                trade=trade,
-                wallet_profile=profile,
-                message=f"🔄 REPEAT ACTOR: Wallet made {profile.trades_last_hour} trades in last hour (${trade.amount_usd:,.0f} this trade)",
-                market_question=market_question,
-                is_sports_market=is_sports,
-                market_url=market_url,
-                category=market_category,
-                position_action=position_action,
+            triggered_conditions.append((
+                "REPEAT_ACTOR",
+                f"🔄 REPEAT ACTOR: Wallet made {profile.trades_last_hour} trades in last hour (${trade.amount_usd:,.0f} this trade)",
+                severity_score
             ))
 
         # 8. Heavy Actor Detection (5+ trades in 24 hours)
         # Skip for anonymous traders
         if profile.is_heavy_actor and trade.amount_usd >= 500 and not self._is_anonymous_trader(trade.trader_address):
             severity_score = 8
-            alerts.append(WhaleAlert(
-                id=f"heavy_{trade.id}",
-                alert_type="HEAVY_ACTOR",
-                severity=score_to_severity(severity_score),
-                severity_score=severity_score,
-                trade=trade,
-                wallet_profile=profile,
-                message=f"⚡ HEAVY ACTOR: Wallet made {profile.trades_last_24h} trades in 24h (${profile.total_volume_usd:,.0f} total volume)",
-                market_question=market_question,
-                is_sports_market=is_sports,
-                market_url=market_url,
-                category=market_category,
-                position_action=position_action,
+            triggered_conditions.append((
+                "HEAVY_ACTOR",
+                f"⚡ HEAVY ACTOR: Wallet made {profile.trades_last_24h} trades in 24h (${profile.total_volume_usd:,.0f} total volume)",
+                severity_score
             ))
 
         # 9. Extreme Confidence Detection (>95% or <5% probability bets)
@@ -1116,19 +1057,10 @@ class WhaleDetector:
                 emoji = "🎰"
                 desc = f"longshot ({prob:.0%} probability)"
 
-            alerts.append(WhaleAlert(
-                id=f"extreme_{trade.id}",
-                alert_type="EXTREME_CONFIDENCE",
-                severity=score_to_severity(severity_score),
-                severity_score=severity_score,
-                trade=trade,
-                wallet_profile=profile,
-                message=f"{emoji} EXTREME CONFIDENCE: ${trade.amount_usd:,.0f} bet on {desc}",
-                market_question=market_question,
-                is_sports_market=is_sports,
-                market_url=market_url,
-                category=market_category,
-                position_action=position_action,
+            triggered_conditions.append((
+                "EXTREME_CONFIDENCE",
+                f"{emoji} EXTREME CONFIDENCE: ${trade.amount_usd:,.0f} bet on {desc}",
+                severity_score
             ))
 
         # 10. Whale Exit Detection (large sells)
@@ -1137,38 +1069,20 @@ class WhaleDetector:
             # Check if this wallet has been a significant buyer
             if profile.buy_volume_usd >= self.whale_threshold_usd:
                 severity_score = 8  # Whale exiting is significant
-                alerts.append(WhaleAlert(
-                    id=f"exit_{trade.id}",
-                    alert_type="WHALE_EXIT",
-                    severity=score_to_severity(severity_score),
-                    severity_score=severity_score,
-                    trade=trade,
-                    wallet_profile=profile,
-                    message=f"🚪 WHALE EXIT: Wallet selling ${trade.amount_usd:,.0f} (prev bought ${profile.buy_volume_usd:,.0f})",
-                    market_question=market_question,
-                    is_sports_market=is_sports,
-                    market_url=market_url,
-                    category=market_category,
-                    position_action=position_action,
+                triggered_conditions.append((
+                    "WHALE_EXIT",
+                    f"🚪 WHALE EXIT: Wallet selling ${trade.amount_usd:,.0f} (prev bought ${profile.buy_volume_usd:,.0f})",
+                    severity_score
                 ))
 
         # 11. Contrarian Activity Detection (betting against consensus)
         is_contrarian, prob = self._is_contrarian(trade)
         if is_contrarian and trade.amount_usd >= 3000:
             severity_score = 9  # Contrarian bets are very interesting
-            alerts.append(WhaleAlert(
-                id=f"contrarian_{trade.id}",
-                alert_type="CONTRARIAN",
-                severity="HIGH",
-                severity_score=severity_score,
-                trade=trade,
-                wallet_profile=profile,
-                message=f"🔮 CONTRARIAN: ${trade.amount_usd:,.0f} bet on {prob:.0%} underdog outcome",
-                market_question=market_question,
-                is_sports_market=is_sports,
-                market_url=market_url,
-                category=market_category,
-                position_action=position_action,
+            triggered_conditions.append((
+                "CONTRARIAN",
+                f"🔮 CONTRARIAN: ${trade.amount_usd:,.0f} bet on {prob:.0%} underdog outcome",
+                severity_score
             ))
 
         # 12. Cluster Activity Detection (coordinated wallets)
@@ -1178,19 +1092,10 @@ class WhaleDetector:
             cluster_wallets = self._detect_cluster_activity(trade)
         if cluster_wallets and len(cluster_wallets) >= 2 and trade.amount_usd >= 2000:
             severity_score = 9  # Coordinated activity is very suspicious
-            alerts.append(WhaleAlert(
-                id=f"cluster_{trade.id}",
-                alert_type="CLUSTER_ACTIVITY",
-                severity="HIGH",
-                severity_score=severity_score,
-                trade=trade,
-                wallet_profile=profile,
-                message=f"🕸️ CLUSTER DETECTED: {len(cluster_wallets)} wallets trading same market within {self.cluster_time_window.seconds // 60}min",
-                market_question=market_question,
-                is_sports_market=is_sports,
-                market_url=market_url,
-                category=market_category,
-                position_action=position_action,
+            triggered_conditions.append((
+                "CLUSTER_ACTIVITY",
+                f"🕸️ CLUSTER DETECTED: {len(cluster_wallets)} wallets trading same market within {self.cluster_time_window.seconds // 60}min",
+                severity_score
             ))
 
         # ==========================================
@@ -1201,19 +1106,10 @@ class WhaleDetector:
         impact_ratio = self._calculate_impact_ratio(trade)
         if impact_ratio >= self.impact_ratio_threshold and trade.amount_usd >= 1000:
             severity_score = 8 if impact_ratio >= 0.15 else 7
-            alerts.append(WhaleAlert(
-                id=f"impact_{trade.id}",
-                alert_type="HIGH_IMPACT",
-                severity=score_to_severity(severity_score),
-                severity_score=severity_score,
-                trade=trade,
-                wallet_profile=profile,
-                message=f"💥 HIGH IMPACT: ${trade.amount_usd:,.0f} is {impact_ratio:.0%} of market's hourly volume",
-                market_question=market_question,
-                is_sports_market=is_sports,
-                market_url=market_url,
-                category=market_category,
-                position_action=position_action,
+            triggered_conditions.append((
+                "HIGH_IMPACT",
+                f"💥 HIGH IMPACT: ${trade.amount_usd:,.0f} is {impact_ratio:.0%} of market's hourly volume",
+                severity_score
             ))
 
         # 14. Entity Activity Detection (multi-wallet entity trading)
@@ -1223,30 +1119,53 @@ class WhaleDetector:
             entity = self.get_entity_for_wallet(trade.trader_address)
         if entity and entity.wallet_count >= 2 and trade.amount_usd >= 1000:
             severity_score = 9  # Entity activity is very interesting
-            alerts.append(WhaleAlert(
-                id=f"entity_{trade.id}",
-                alert_type="ENTITY_ACTIVITY",
-                severity="HIGH",
-                severity_score=severity_score,
-                trade=trade,
-                wallet_profile=profile,
-                message=f"👥 ENTITY DETECTED: Wallet is part of {entity.wallet_count}-wallet entity (conf: {entity.confidence:.0%})",
-                market_question=market_question,
-                is_sports_market=is_sports,
-                market_url=market_url,
-                category=market_category,
-                position_action=position_action,
+            triggered_conditions.append((
+                "ENTITY_ACTIVITY",
+                f"👥 ENTITY DETECTED: Wallet is part of {entity.wallet_count}-wallet entity (conf: {entity.confidence:.0%})",
+                severity_score
             ))
 
-        # Filter out low-value alerts (except cluster activity and exits)
-        # This reduces noise from small z-score alerts
-        alerts = [
-            alert for alert in alerts
-            if alert.trade.amount_usd >= self.min_alert_threshold_usd
-            or alert.alert_type in self.exempt_alert_types
+        # ==========================================
+        # CONSOLIDATION: Create single alert with all triggered conditions
+        # ==========================================
+
+        if not triggered_conditions:
+            return []
+
+        # Filter out low-value triggers (except cluster activity and exits)
+        filtered_conditions = [
+            (atype, msg, score) for atype, msg, score in triggered_conditions
+            if trade.amount_usd >= self.min_alert_threshold_usd
+            or atype in self.exempt_alert_types
         ]
 
-        return alerts
+        if not filtered_conditions:
+            return []
+
+        # Extract alert types, messages, and find max severity
+        alert_types = [c[0] for c in filtered_conditions]
+        messages = [c[1] for c in filtered_conditions]
+        max_severity_score = max(c[2] for c in filtered_conditions)
+
+        # Create single consolidated alert
+        consolidated_alert = WhaleAlert(
+            id=f"consolidated_{trade.id}",
+            alert_types=alert_types,
+            severity=score_to_severity(max_severity_score),
+            severity_score=max_severity_score,
+            trade=trade,
+            wallet_profile=profile,
+            messages=messages,
+            trade_size_percentile=self._calculate_percentile(trade.amount_usd),
+            market_question=market_question,
+            is_sports_market=is_sports,
+            z_score=max_z_score,
+            market_url=market_url,
+            category=market_category,
+            position_action=position_action,
+        )
+
+        return [consolidated_alert]
     
     async def analyze_trades(self, trades: List[Trade], market_questions: Dict[str, str] = None) -> List[WhaleAlert]:
         """
