@@ -679,7 +679,7 @@ class TwitterQueueAlert(AlertChannel):
         return len(self._recent_posts) < self.max_per_hour
 
     async def send(self, alert: AlertMessage) -> bool:
-        """Send tweet-formatted alert to Twitter queue channel."""
+        """Send full alert to Twitter queue channel (same format as main Discord alerts)."""
         if not self.is_configured():
             return False
 
@@ -696,27 +696,76 @@ class TwitterQueueAlert(AlertChannel):
         try:
             import httpx
 
-            # Format the tweet
-            tweet_text = TwitterFormatter.format_tweet(alert)
+            # Use the SAME format as main Discord alerts
+            color = {"LOW": 0x4CAF50, "MEDIUM": 0xFFC107, "HIGH": 0xF44336}.get(alert.severity, 0x9E9E9E)
 
-            # Create Discord message with copy-friendly format
-            embed = {
-                "title": "🐦 Ready to Post to X",
-                "description": f"```\n{tweet_text}\n```",
-                "color": 0x1DA1F2,  # Twitter blue
-                "fields": [
-                    {"name": "💰 Amount", "value": f"${alert.trade_amount:,.2f}", "inline": True},
-                    {"name": "⚡ Severity", "value": alert.severity, "inline": True},
-                    {"name": "🔔 Triggers", "value": str(len(alert.alert_types)), "inline": True},
-                    {"name": "📝 Characters", "value": str(len(tweet_text)), "inline": True},
-                ],
-                "footer": {"text": "Copy the text above and paste to X/Twitter"},
-                "timestamp": alert.timestamp.isoformat(),
-            }
+            # Format action with position intent
+            action = alert.side.capitalize() if alert.side else "Traded"
+            action_emoji = {
+                "OPENING": "🆕",
+                "ADDING": "➕",
+                "CLOSING": "🔚",
+            }.get(alert.position_action, "")
+            position_text = f"{action} **{alert.outcome}**\n{action_emoji} {alert.position_action}"
+
+            # Severity with explanation
+            severity_emoji = {"LOW": "🟢", "MEDIUM": "🟡", "HIGH": "🔴"}.get(alert.severity, "⚪")
+            severity_explanation = SEVERITY_INFO.get(alert.severity, "")
+            severity_text = f"{severity_emoji} {alert.severity}"
+            if severity_explanation:
+                severity_text += f"\n_{severity_explanation}_"
+
+            # Market with link
+            market_text = alert.market_question or "Unknown Market"
+            if alert.market_url:
+                market_text = f"[{market_text}]({alert.market_url})"
+
+            # Trader with link (handle anonymous)
+            is_anonymous = alert.trader_address.startswith("KALSHI_") or alert.trader_address == "UNKNOWN"
+            if is_anonymous:
+                trader_text = "_Anonymous (platform doesn't expose trader identity)_"
+            elif alert.trader_url:
+                trader_short = f"{alert.trader_address[:20]}..."
+                trader_text = f"[`{trader_short}`]({alert.trader_url})"
+            else:
+                trader_short = f"{alert.trader_address[:20]}..."
+                trader_text = f"`{trader_short}`"
+
+            # Category emoji
+            category_emoji = {
+                "Politics": "🏛️", "Crypto": "₿", "Sports": "⚽", "Finance": "📈",
+                "Entertainment": "🎬", "Science": "🔬", "World": "🌍", "Other": "📌",
+            }.get(alert.category, "📌")
+
+            # Format consolidated reasons
+            if len(alert.messages) > 1:
+                reasons_text = "\n".join(f"• {msg}" for msg in alert.messages)
+                trigger_badges = " ".join(f"`{t.replace('_', ' ')}`" for t in alert.alert_types)
+                description = f"**🔔 Triggered:** {trigger_badges}\n\n{reasons_text}"
+            else:
+                description = alert.messages[0] if alert.messages else ""
+
+            # Build fields - same as main Discord alerts
+            fields = [
+                {"name": "📊 Market", "value": market_text, "inline": False},
+                {"name": f"{category_emoji} Category", "value": alert.category, "inline": True},
+                {"name": "🏦 Platform", "value": alert.platform, "inline": True},
+                {"name": "💰 Amount", "value": f"${alert.trade_amount:,.2f}", "inline": True},
+                {"name": "🎯 Position", "value": position_text, "inline": True},
+                {"name": "⚡ Severity", "value": severity_text, "inline": False},
+                {"name": "👤 Trader", "value": trader_text, "inline": False},
+            ]
 
             payload = {
-                "embeds": [embed],
-                "username": "Twitter Queue"
+                "embeds": [{
+                    "title": f"🐋 {alert.title}",
+                    "description": description,
+                    "color": color,
+                    "fields": fields,
+                    "timestamp": alert.timestamp.isoformat(),
+                    "footer": {"text": f"Whale Tracker • {alert.platform} • {alert.category}"}
+                }],
+                "username": "Whale Tracker"
             }
 
             async with httpx.AsyncClient() as client:
