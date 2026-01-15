@@ -77,12 +77,27 @@ SPORTS_KEYWORDS = [
 ]
 
 
-def is_sports_market(market_question: str) -> bool:
-    """Check if a market is sports-related based on keywords."""
-    if not market_question:
-        return False
-    question_lower = market_question.lower()
-    return any(keyword in question_lower for keyword in SPORTS_KEYWORDS)
+def is_sports_market(market_question: str, market_id: str = None) -> bool:
+    """Check if a market is sports-related based on keywords.
+
+    Checks both the market question and market_id/ticker for sports keywords.
+    This catches Kalshi markets where the ticker contains 'NBA', 'NFL', etc.
+    """
+    # Check market question
+    if market_question:
+        question_lower = market_question.lower()
+        if any(keyword in question_lower for keyword in SPORTS_KEYWORDS):
+            return True
+
+    # Check market_id/ticker (catches Kalshi tickers like KXNBATOTAL)
+    if market_id:
+        id_lower = market_id.lower()
+        # Check for sports league codes in ticker
+        sports_ticker_patterns = ['nba', 'nfl', 'mlb', 'nhl', 'mls', 'ncaa', 'ufc', 'pga']
+        if any(pattern in id_lower for pattern in sports_ticker_patterns):
+            return True
+
+    return False
 
 
 @dataclass
@@ -527,7 +542,7 @@ class WhaleDetector:
         )
 
         # Track non-sports separately
-        if market_question and not is_sports_market(market_question):
+        if not is_sports_market(market_question, trade.market_id):
             profile.non_sports_trades += 1
             profile.non_sports_volume_usd += trade.amount_usd
 
@@ -876,8 +891,8 @@ class WhaleDetector:
         Returns a list of WhaleAlerts (can return multiple per trade).
         Enhanced with 11 total detection algorithms.
         """
-        # Check if we should skip sports markets
-        is_sports = is_sports_market(market_question) if market_question else False
+        # Check if we should skip sports markets (check both question and ticker)
+        is_sports = is_sports_market(market_question, trade.market_id)
         if self.exclude_sports and is_sports:
             return []
 
