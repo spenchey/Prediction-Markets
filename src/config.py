@@ -104,6 +104,11 @@ class Settings(BaseSettings):
     DISCORD_THREAD_WORLD: Optional[str] = None
     DISCORD_THREAD_OTHER: Optional[str] = None  # Fallback for uncategorized
 
+    # Twitter Queue - private channel for high-value alerts to post to X
+    DISCORD_TWITTER_WEBHOOK_URL: Optional[str] = None
+    TWITTER_MIN_AMOUNT: float = 1000.0  # Minimum USD for Twitter-worthy alerts
+    TWITTER_MAX_PER_HOUR: int = 4  # Rate limit for Twitter posts
+
     # ============================================
     # SLACK NOTIFICATIONS
     # ============================================

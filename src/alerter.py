@@ -494,6 +494,250 @@ class ExpoPushAlert(AlertChannel):
     def is_configured(self) -> bool: return len(self.push_tokens) > 0
 
 
+class TwitterFormatter:
+    """
+    Formats alerts into tweet-ready text with hashtags.
+
+    - Keeps tweets under 280 characters
+    - Includes evergreen tags (#PredictionMarkets #WhaleAlert)
+    - Adds relevant category/topic tags
+    """
+
+    # Evergreen hashtags (always included)
+    EVERGREEN_TAGS = ["#PredictionMarkets", "#WhaleAlert"]
+
+    # Category-specific hashtags
+    CATEGORY_TAGS = {
+        "Politics": ["#Politics", "#Election"],
+        "Crypto": ["#Crypto", "#Bitcoin", "#Ethereum"],
+        "Finance": ["#Stocks", "#Finance", "#Markets"],
+        "Entertainment": ["#Entertainment", "#Showbiz"],
+        "World": ["#WorldNews", "#Geopolitics"],
+        "Sports": ["#Sports", "#Betting"],
+        "Other": [],
+    }
+
+    # Topic-specific hashtags (matched against market question)
+    TOPIC_TAGS = {
+        "trump": "#Trump",
+        "biden": "#Biden",
+        "elon": "#Elon",
+        "musk": "#Musk",
+        "tesla": "#Tesla",
+        "spacex": "#SpaceX",
+        "bitcoin": "#BTC",
+        "ethereum": "#ETH",
+        "fed": "#FederalReserve",
+        "inflation": "#Inflation",
+        "ai": "#AI",
+        "openai": "#OpenAI",
+        "chatgpt": "#ChatGPT",
+        "apple": "#Apple",
+        "google": "#Google",
+        "meta": "#Meta",
+        "amazon": "#Amazon",
+        "microsoft": "#Microsoft",
+        "nvidia": "#NVIDIA",
+        "ukraine": "#Ukraine",
+        "russia": "#Russia",
+        "china": "#China",
+        "congress": "#Congress",
+        "senate": "#Senate",
+        "supreme court": "#SCOTUS",
+        "oscar": "#Oscars",
+        "grammy": "#Grammys",
+        "super bowl": "#SuperBowl",
+    }
+
+    @classmethod
+    def format_tweet(cls, alert: AlertMessage) -> str:
+        """Generate a tweet-ready string from an alert."""
+        # Build the main tweet content
+        amount_str = f"${alert.trade_amount:,.0f}"
+
+        # Shorten market question if needed
+        market = alert.market_question or "Unknown Market"
+        if len(market) > 100:
+            market = market[:97] + "..."
+
+        # Position info
+        action = alert.side.capitalize() if alert.side else "Trade"
+        outcome = alert.outcome
+
+        # Alert type summary
+        if len(alert.alert_types) > 1:
+            type_summary = f"{len(alert.alert_types)} signals"
+        else:
+            type_summary = alert.alert_types[0].replace('_', ' ').title()
+
+        # Build main content
+        main_content = f"🐋 {amount_str} {action} {outcome}\n\n📊 {market}\n\n🔔 {type_summary}"
+
+        # Collect hashtags
+        tags = list(cls.EVERGREEN_TAGS)
+
+        # Add category tags
+        cat_tags = cls.CATEGORY_TAGS.get(alert.category, [])
+        tags.extend(cat_tags[:2])  # Max 2 category tags
+
+        # Add topic tags (check market question for keywords)
+        market_lower = market.lower()
+        topic_tags_added = 0
+        for keyword, tag in cls.TOPIC_TAGS.items():
+            if keyword in market_lower and tag not in tags:
+                tags.append(tag)
+                topic_tags_added += 1
+                if topic_tags_added >= 2:  # Max 2 topic tags
+                    break
+
+        # Build final tweet, ensuring under 280 chars
+        tags_str = " ".join(tags)
+        tweet = f"{main_content}\n\n{tags_str}"
+
+        # Truncate if needed (shouldn't happen with our limits)
+        if len(tweet) > 280:
+            # Remove topic tags first, then category tags
+            while len(tweet) > 280 and len(tags) > 2:
+                tags.pop()
+                tags_str = " ".join(tags)
+                tweet = f"{main_content}\n\n{tags_str}"
+
+            # If still too long, truncate market question
+            if len(tweet) > 280:
+                excess = len(tweet) - 277
+                market = market[:len(market) - excess - 3] + "..."
+                main_content = f"🐋 {amount_str} {action} {outcome}\n\n📊 {market}\n\n🔔 {type_summary}"
+                tweet = f"{main_content}\n\n{tags_str}"
+
+        return tweet
+
+    @classmethod
+    def is_twitter_worthy(cls, alert: AlertMessage, min_amount: float = 1000.0) -> bool:
+        """
+        Determine if an alert is worthy of posting to Twitter.
+
+        Criteria (must meet at least one):
+        - Trade amount >= min_amount (default $1,000)
+        - HIGH severity
+        - Multi-signal alert (3+ triggers)
+        - Contains HIGH_IMPACT or SMART_MONEY type
+        """
+        # Check amount threshold
+        if alert.trade_amount >= min_amount:
+            return True
+
+        # Check severity
+        if alert.severity == "HIGH":
+            return True
+
+        # Check for multi-signal (3+ triggers)
+        if len(alert.alert_types) >= 3:
+            return True
+
+        # Check for high-value signal types
+        high_value_types = {"HIGH_IMPACT", "SMART_MONEY", "WHALE_TRADE", "CLUSTER_ACTIVITY"}
+        if any(t in high_value_types for t in alert.alert_types):
+            return True
+
+        return False
+
+
+class TwitterQueueAlert(AlertChannel):
+    """
+    Sends formatted tweets to a private Discord channel for manual posting to X.
+
+    Features:
+    - Filters for high-value alerts only ($1,000+ or HIGH severity)
+    - Formats alerts as tweet-ready text with hashtags
+    - Rate limits to ~4 per hour to avoid spam
+    - Posts to a private #for-twitter Discord channel
+
+    Setup:
+    1. Create private Discord text channel called #for-twitter
+    2. Create webhook in that channel
+    3. Set DISCORD_TWITTER_WEBHOOK_URL in environment
+    """
+
+    def __init__(self, webhook_url: str = None, min_amount: float = None, max_per_hour: int = None):
+        self.webhook_url = webhook_url or getattr(settings, 'DISCORD_TWITTER_WEBHOOK_URL', None)
+        self.min_amount = min_amount or getattr(settings, 'TWITTER_MIN_AMOUNT', 1000.0)
+        self.max_per_hour = max_per_hour or getattr(settings, 'TWITTER_MAX_PER_HOUR', 4)
+        self._recent_posts: List[datetime] = []
+
+    @property
+    def name(self) -> str:
+        return "TwitterQueue"
+
+    def _check_rate_limit(self) -> bool:
+        """Check if we're under the hourly rate limit."""
+        now = datetime.now()
+        one_hour_ago = now.replace(hour=now.hour - 1 if now.hour > 0 else 23)
+
+        # Clean up old entries
+        self._recent_posts = [t for t in self._recent_posts if t > one_hour_ago]
+
+        return len(self._recent_posts) < self.max_per_hour
+
+    async def send(self, alert: AlertMessage) -> bool:
+        """Send tweet-formatted alert to Twitter queue channel."""
+        if not self.is_configured():
+            return False
+
+        # Check if alert is Twitter-worthy
+        if not TwitterFormatter.is_twitter_worthy(alert, self.min_amount):
+            logger.debug(f"Alert not Twitter-worthy: ${alert.trade_amount:.0f} {alert.severity}")
+            return True  # Return True to not count as failure
+
+        # Check rate limit
+        if not self._check_rate_limit():
+            logger.warning(f"Twitter queue rate limit reached ({self.max_per_hour}/hour)")
+            return True  # Return True to not count as failure
+
+        try:
+            import httpx
+
+            # Format the tweet
+            tweet_text = TwitterFormatter.format_tweet(alert)
+
+            # Create Discord message with copy-friendly format
+            embed = {
+                "title": "🐦 Ready to Post to X",
+                "description": f"```\n{tweet_text}\n```",
+                "color": 0x1DA1F2,  # Twitter blue
+                "fields": [
+                    {"name": "💰 Amount", "value": f"${alert.trade_amount:,.2f}", "inline": True},
+                    {"name": "⚡ Severity", "value": alert.severity, "inline": True},
+                    {"name": "🔔 Triggers", "value": str(len(alert.alert_types)), "inline": True},
+                    {"name": "📝 Characters", "value": str(len(tweet_text)), "inline": True},
+                ],
+                "footer": {"text": "Copy the text above and paste to X/Twitter"},
+                "timestamp": alert.timestamp.isoformat(),
+            }
+
+            payload = {
+                "embeds": [embed],
+                "username": "Twitter Queue"
+            }
+
+            async with httpx.AsyncClient() as client:
+                r = await client.post(self.webhook_url, json=payload, timeout=10.0)
+
+                if r.status_code in [200, 204]:
+                    self._recent_posts.append(datetime.now())
+                    logger.info(f"🐦 Tweet queued: ${alert.trade_amount:,.0f}")
+                    return True
+                else:
+                    logger.error(f"Twitter queue error: {r.status_code} - {r.text}")
+                    return False
+
+        except Exception as e:
+            logger.error(f"Twitter queue error: {e}")
+            return False
+
+    def is_configured(self) -> bool:
+        return bool(self.webhook_url)
+
+
 class Alerter:
     """Main alerter managing all channels."""
     
@@ -662,4 +906,5 @@ def create_default_alerter() -> Alerter:
     alerter.add_channel(DiscordAlert())
     alerter.add_channel(TelegramAlert())
     alerter.add_channel(SlackAlert())
+    alerter.add_channel(TwitterQueueAlert())  # Twitter queue for high-value alerts
     return alerter

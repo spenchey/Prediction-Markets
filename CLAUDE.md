@@ -276,6 +276,64 @@ curl -X POST https://web-production-9d2d3.up.railway.app/digest/daily
 
 ---
 
+## Twitter Queue (Added 2026-01-15)
+
+Semi-automated Twitter/X posting via a private Discord channel. High-value alerts are formatted as tweet-ready text for manual copy/paste to X.
+
+### Why Semi-Automated?
+- X API costs $200/month for write access
+- This approach is free and gives you control over what gets posted
+- Rate-limited to ~4 posts/hour to avoid spam
+
+### Features
+- **TwitterFormatter** - Generates tweet text with hashtags (< 280 chars)
+- **High-value filtering** - Only alerts meeting criteria are queued
+- **Rate limiting** - Max 4 posts per hour (configurable)
+- **Copy-friendly format** - Discord embeds with code blocks for easy copying
+
+### Filtering Criteria (must meet at least one)
+- Trade amount >= $1,000
+- HIGH severity
+- 3+ trigger signals (multi-signal alert)
+- Contains HIGH_IMPACT, SMART_MONEY, WHALE_TRADE, or CLUSTER_ACTIVITY
+
+### Environment Variables
+```bash
+DISCORD_TWITTER_WEBHOOK_URL=https://discord.com/api/webhooks/...  # Webhook for #for-twitter
+TWITTER_MIN_AMOUNT=1000        # Minimum USD for Twitter-worthy alerts
+TWITTER_MAX_PER_HOUR=4         # Rate limit
+```
+
+### Hashtag Strategy
+**Evergreen tags** (always included):
+- `#PredictionMarkets` `#WhaleAlert`
+
+**Category tags** (up to 2):
+- Politics: `#Politics` `#Election`
+- Crypto: `#Crypto` `#Bitcoin` `#Ethereum`
+- Finance: `#Stocks` `#Finance` `#Markets`
+
+**Topic tags** (up to 2, based on market question):
+- `#Trump` `#Biden` `#Elon` `#Tesla` `#SpaceX` `#BTC` `#ETH` etc.
+
+### Example Tweet Format
+```
+🐋 $5,000 Buy Yes
+
+📊 Will Trump win the 2028 election?
+
+🔔 Multi-Signal Alert (3 triggers)
+
+#PredictionMarkets #WhaleAlert #Politics #Trump
+```
+
+### Discord Channel
+- **Channel**: #for-twitter (private)
+- **Channel ID**: 1461428003056652339
+- Only visible to server owner
+
+---
+
 ## Alert Types (14 total)
 
 ### Original (6)
