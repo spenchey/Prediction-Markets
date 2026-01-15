@@ -885,3 +885,65 @@ DISCORD_TWITTER_WEBHOOK_URL=<set in Railway, do not commit>
 - `ff5264a` - Twitter Queue: Use same rich format as main Discord alerts
 - `a1ee71a` - Add copy-friendly hashtags field to Twitter Queue alerts
 - `a687bbc` - Move hashtags to footer for easy full-copy to X
+
+---
+
+## Session Log (2026-01-15) - LaunchPass Monetization & Security Fix
+
+### Task: Set Up Payment Collection with LaunchPass
+
+**Request**: Monetize the whale tracker service with subscription tiers using LaunchPass.
+
+### LaunchPass Configuration
+
+Created two subscription products:
+
+| Plan | Price | Discord Role | Access |
+|------|-------|--------------|--------|
+| **WhaleWatch** | $29/month | `premium` | Main prediction-whale-alerts forum |
+| **Sports Add-On** | $4.99/month | `sports` | Sports-alerts channel |
+
+**LaunchPass URLs:**
+- Main: `https://launchpass.com/predictionwhales/whalewatch`
+- Sports: `https://launchpass.com/predictionwhales/sports`
+
+### Discord Channel Permissions
+
+Configured role-based access control:
+
+| Channel | Type | Visibility | Required Role |
+|---------|------|------------|---------------|
+| `#prediction-whale-alerts` | Forum | Private | `premium` |
+| `#sports-alerts` | Text | Private | `sports` |
+| `#welcome`, `#general`, etc. | Text | Public | None |
+
+**How it works:**
+1. User subscribes via LaunchPass payment link
+2. LaunchPass assigns Discord role automatically
+3. User gains access to private channels based on role
+
+### Security Fix: GitGuardian Alert
+
+**Problem**: Discord webhook URL was exposed in CLAUDE.md and committed to public GitHub repo.
+
+**Resolution:**
+1. Removed webhook URL from CLAUDE.md (replaced with placeholder)
+2. Installed `git-filter-repo` tool
+3. Scrubbed webhook URL from entire git history (58 commits)
+4. Force pushed cleaned history to GitHub
+
+**Command used:**
+```bash
+git filter-repo --replace-text replacements.txt --force
+git remote add origin https://github.com/spenchey/Prediction-Markets.git
+git push --force origin master
+```
+
+**Important reminder:** Never commit secrets to git. Always use environment variables (Railway) for sensitive values like webhook URLs, API keys, etc.
+
+### New Discord Channel
+
+Created `#sports-alerts` text channel:
+- **Channel ID**: `1461465320140312819`
+- **Access**: Private, requires `sports` role
+- **Purpose**: Dedicated channel for sports add-on subscribers ($4.99/mo)
