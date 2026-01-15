@@ -95,6 +95,15 @@ class Settings(BaseSettings):
     # For forum channels: create new thread with this name (creates many threads)
     DISCORD_THREAD_NAME: Optional[str] = None
 
+    # Category-specific thread IDs (for routing alerts by category)
+    DISCORD_THREAD_POLITICS: Optional[str] = None
+    DISCORD_THREAD_CRYPTO: Optional[str] = None
+    DISCORD_THREAD_SPORTS: Optional[str] = None
+    DISCORD_THREAD_FINANCE: Optional[str] = None
+    DISCORD_THREAD_ENTERTAINMENT: Optional[str] = None
+    DISCORD_THREAD_WORLD: Optional[str] = None
+    DISCORD_THREAD_OTHER: Optional[str] = None  # Fallback for uncategorized
+
     # ============================================
     # SLACK NOTIFICATIONS
     # ============================================

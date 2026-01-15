@@ -385,6 +385,7 @@ class WhaleDetector:
         exit_threshold_usd: float = 5_000,      # Min USD for exit alerts
         contrarian_threshold: float = 0.15,     # Bet on outcome with <15% odds
         cluster_time_window_minutes: int = 5,   # Time window for cluster detection
+        min_alert_threshold_usd: float = 450,   # Minimum USD for alerts (except cluster/exit)
     ):
         """
         Initialize the whale detector with comprehensive detection algorithms.
@@ -415,6 +416,10 @@ class WhaleDetector:
         self.exit_threshold_usd = exit_threshold_usd
         self.contrarian_threshold = contrarian_threshold
         self.cluster_time_window = timedelta(minutes=cluster_time_window_minutes)
+        self.min_alert_threshold_usd = min_alert_threshold_usd
+
+        # Alert types exempt from minimum threshold (valuable signals at any size)
+        self.exempt_alert_types = {"CLUSTER_ACTIVITY", "WHALE_EXIT"}
 
         # Track wallet profiles (in production, store in database)
         self.wallet_profiles: Dict[str, WalletProfile] = {}
@@ -1204,6 +1209,14 @@ class WhaleDetector:
                 category=market_category,
                 position_action=position_action,
             ))
+
+        # Filter out low-value alerts (except cluster activity and exits)
+        # This reduces noise from small z-score alerts
+        alerts = [
+            alert for alert in alerts
+            if alert.trade.amount_usd >= self.min_alert_threshold_usd
+            or alert.alert_type in self.exempt_alert_types
+        ]
 
         return alerts
     

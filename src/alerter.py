@@ -179,6 +179,15 @@ class DiscordAlert(AlertChannel):
     - DISCORD_THREAD_ID: Post to an existing thread (recommended)
     - DISCORD_THREAD_NAME: Create a new thread for each alert (creates many threads)
 
+    Category-based routing:
+    - DISCORD_THREAD_POLITICS: Thread ID for politics alerts
+    - DISCORD_THREAD_CRYPTO: Thread ID for crypto alerts
+    - DISCORD_THREAD_SPORTS: Thread ID for sports alerts
+    - DISCORD_THREAD_FINANCE: Thread ID for finance alerts
+    - DISCORD_THREAD_ENTERTAINMENT: Thread ID for entertainment alerts
+    - DISCORD_THREAD_WORLD: Thread ID for world alerts
+    - DISCORD_THREAD_OTHER: Thread ID for uncategorized alerts
+
     If webhook points to a forum channel and neither is set, uses alert title as thread name.
     """
     def __init__(self, webhook_url: str = None, thread_id: str = None, thread_name: str = None):
@@ -186,6 +195,29 @@ class DiscordAlert(AlertChannel):
         self.thread_id = thread_id or getattr(settings, 'DISCORD_THREAD_ID', None)
         self.thread_name = thread_name or getattr(settings, 'DISCORD_THREAD_NAME', None)
         self._is_forum_channel = None  # Will be detected on first send
+
+        # Category-specific thread IDs
+        self.category_threads = {
+            "Politics": getattr(settings, 'DISCORD_THREAD_POLITICS', None),
+            "Crypto": getattr(settings, 'DISCORD_THREAD_CRYPTO', None),
+            "Sports": getattr(settings, 'DISCORD_THREAD_SPORTS', None),
+            "Finance": getattr(settings, 'DISCORD_THREAD_FINANCE', None),
+            "Entertainment": getattr(settings, 'DISCORD_THREAD_ENTERTAINMENT', None),
+            "World": getattr(settings, 'DISCORD_THREAD_WORLD', None),
+            "Other": getattr(settings, 'DISCORD_THREAD_OTHER', None),
+        }
+
+    def _get_thread_id_for_category(self, category: str) -> Optional[str]:
+        """Get the appropriate thread ID for a category."""
+        # Try exact match first
+        thread_id = self.category_threads.get(category)
+        if thread_id:
+            return thread_id
+        # Fallback to "Other" category thread
+        if self.category_threads.get("Other"):
+            return self.category_threads["Other"]
+        # Fallback to default thread ID
+        return self.thread_id
 
     @property
     def name(self) -> str: return "Discord"
@@ -265,9 +297,11 @@ class DiscordAlert(AlertChannel):
             }
 
             # Build URL with thread_id as query parameter (required for forum channels)
+            # Use category-based routing if available
+            thread_id = self._get_thread_id_for_category(alert.category)
             url = self.webhook_url
-            if self.thread_id:
-                url = f"{self.webhook_url}?thread_id={self.thread_id}"
+            if thread_id:
+                url = f"{self.webhook_url}?thread_id={thread_id}"
 
             async with httpx.AsyncClient() as client:
                 r = await client.post(url, json=payload, timeout=10.0)

@@ -175,9 +175,34 @@ railway redeploy -y
 
 The Discord webhook points to a **forum channel**, which requires special handling.
 
+### Category-Based Thread Routing (Added 2026-01-15)
+
+Alerts are automatically routed to category-specific threads:
+
+| Category | Thread ID | Thread Name |
+|----------|-----------|-------------|
+| Politics | `1461398615242313819` | 🏛️ Politics Alerts |
+| Crypto | `1461399011373092884` | ₿ Crypto Alerts |
+| Sports | `1461403481255579748` | ⚽ Sports Alerts |
+| Finance | `1461400496379138271` | 📈 Finance Alerts |
+| Entertainment | `1461400992028299447` | 🎬 Entertainment Alerts |
+| World | `1461401409709674618` | 🌍 World Alerts |
+| Other (fallback) | `1461073799905542420` | Whale Alerts |
+
+**Environment Variables for Category Routing:**
+```bash
+DISCORD_THREAD_POLITICS=1461398615242313819
+DISCORD_THREAD_CRYPTO=1461399011373092884
+DISCORD_THREAD_SPORTS=1461403481255579748
+DISCORD_THREAD_FINANCE=1461400496379138271
+DISCORD_THREAD_ENTERTAINMENT=1461400992028299447
+DISCORD_THREAD_WORLD=1461401409709674618
+DISCORD_THREAD_OTHER=1461073799905542420
+```
+
 ### Key Details
 - **Webhook URL**: Stored in Railway as `DISCORD_WEBHOOK_URL`
-- **Thread ID**: `1461073799905542420` (the "Whale Alerts" thread)
+- **Default Thread ID**: `1461073799905542420` (the "Whale Alerts" thread - fallback)
 - **Thread Name**: "Whale Alerts"
 
 ### How Forum Channels Work
@@ -458,4 +483,65 @@ python test_kalshi_auth.py
 
 # Check Railway logs for Kalshi activity
 railway logs -n 100 | grep -i kalshi
+```
+
+---
+
+## Session Log (2026-01-15) - Alert Filtering & Category Routing
+
+### Changes Made
+
+#### 1. Minimum Alert Threshold ($450)
+**Problem**: Too many low-value alerts cluttering the feed.
+
+**Solution**: Added `min_alert_threshold_usd` parameter to `WhaleDetector`:
+- Default: $450 minimum for all alerts
+- **Exceptions**: CLUSTER_ACTIVITY and WHALE_EXIT alerts bypass the minimum (valuable signals at any size)
+
+**Files Changed**:
+- `src/whale_detector.py` - Added `min_alert_threshold_usd` parameter and filter logic
+
+**Code**:
+```python
+# Filter out low-value alerts (except cluster activity and exits)
+alerts = [
+    alert for alert in alerts
+    if alert.trade.amount_usd >= self.min_alert_threshold_usd
+    or alert.alert_type in self.exempt_alert_types
+]
+```
+
+#### 2. Category-Based Discord Thread Routing
+**Problem**: All alerts going to single "Whale Alerts" thread, making it hard to follow specific categories.
+
+**Solution**: Created separate Discord threads per category and updated alerter to route automatically:
+
+| Category | Thread ID |
+|----------|-----------|
+| Politics | `1461398615242313819` |
+| Crypto | `1461399011373092884` |
+| Finance | `1461400496379138271` |
+| Entertainment | `1461400992028299447` |
+| World | `1461401409709674618` |
+| Other | `1461073799905542420` |
+
+**Files Changed**:
+- `src/config.py` - Added `DISCORD_THREAD_*` settings for each category
+- `src/alerter.py` - Added `_get_thread_id_for_category()` method and category routing logic
+
+**Railway Environment Variables to Set**:
+```bash
+railway variables --set DISCORD_THREAD_POLITICS=1461398615242313819
+railway variables --set DISCORD_THREAD_CRYPTO=1461399011373092884
+railway variables --set DISCORD_THREAD_SPORTS=1461403481255579748
+railway variables --set DISCORD_THREAD_FINANCE=1461400496379138271
+railway variables --set DISCORD_THREAD_ENTERTAINMENT=1461400992028299447
+railway variables --set DISCORD_THREAD_WORLD=1461401409709674618
+railway variables --set DISCORD_THREAD_OTHER=1461073799905542420
+```
+
+### Deployment
+After setting environment variables, redeploy:
+```bash
+railway redeploy -y
 ```
