@@ -230,6 +230,52 @@ The test script auto-detects forum channels and retries with `thread_name` if ne
 
 ---
 
+## Daily Email Digest (Added 2026-01-15)
+
+Automated daily summary email sent at **5 AM Eastern Time** with a modern Robinhood/Coinbase style design.
+
+### Features
+- **Database-backed compilation** - Survives service restarts
+- **Modern HTML template** - Dark header, card-based trades, pill badges
+- **APScheduler** - Runs daily at 5 AM ET, weekly on Monday 9 AM ET
+
+### Environment Variables
+```bash
+DAILY_DIGEST_HOUR=5          # Hour to send (24h format)
+DIGEST_TIMEZONE=America/New_York
+RESEND_API_KEY=re_xxxxx      # Required for email sending
+ALERT_EMAIL=you@example.com  # Recipient email
+```
+
+### API Endpoints
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/digest/preview` | GET | Preview digest data (JSON) |
+| `/digest/preview/html` | GET | Preview HTML email template |
+| `/digest/daily` | POST | Manually trigger daily digest |
+| `/digest/weekly` | POST | Manually trigger weekly digest |
+
+### Testing
+```bash
+# Preview digest data
+curl https://web-production-9d2d3.up.railway.app/digest/preview
+
+# Preview HTML template in browser
+open https://web-production-9d2d3.up.railway.app/digest/preview/html
+
+# Trigger manual daily digest
+curl -X POST https://web-production-9d2d3.up.railway.app/digest/daily
+```
+
+### Email Design
+- **Header**: Dark (#1a1a1a) with whale emoji
+- **Stats Bar**: Alerts count, Volume ($), Smart Money count
+- **Alert Breakdown**: Pill badges by type
+- **Top Trades**: Card-based with green accent ($00d395)
+- **Footer**: Dark with unsubscribe links
+
+---
+
 ## Alert Types (14 total)
 
 ### Original (6)
@@ -595,3 +641,45 @@ Keep the thread IDs listed in the category routing table above.
 - `106c3e7` - Add $450 min alert threshold and Sports category routing
 - `5fe6d7a` - Improve sports filtering with team names and matchup patterns
 - `cb7c948` - Fix sports filtering for Kalshi markets (check ticker too)
+
+---
+
+## Session Log (2026-01-15) - Daily Email Digest
+
+### Task: Daily Summary Email at 5 AM ET
+
+**Request**: Create daily summary email with modern design (Robinhood/Coinbase style) using Resend, sent at 5 AM ET.
+
+### Implementation
+
+#### Files Changed
+- `src/database.py` - Added `get_alerts_by_date_range()`, `get_digest_summary()`
+- `src/alerter.py` - Added `send_digest()` method to Alerter class
+- `src/scheduler.py` - Modern HTML template, `_compile_digest_from_db()` method
+- `src/config.py` - `DAILY_DIGEST_HOUR=5`, `DIGEST_TIMEZONE=America/New_York`
+- `src/main.py` - Initialize scheduler, add `/digest/*` endpoints
+
+#### Key Features
+1. **Database-backed compilation** - Alerts queried from PostgreSQL, survives restarts
+2. **Modern HTML design** - Dark header, green accents (#00d395), card-based trades
+3. **APScheduler integration** - CronTrigger at 5 AM ET daily
+4. **Test endpoints** - `/digest/preview`, `/digest/preview/html`, `/digest/daily`
+
+#### API Endpoints Added
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/digest/preview` | GET | JSON preview of digest data |
+| `/digest/preview/html` | GET | HTML email preview (renders in browser) |
+| `/digest/daily` | POST | Manually trigger daily digest |
+| `/digest/weekly` | POST | Manually trigger weekly digest |
+
+#### Environment Variables Required
+```bash
+RESEND_API_KEY=re_xxxxx
+ALERT_EMAIL=you@example.com
+DAILY_DIGEST_HOUR=5
+DIGEST_TIMEZONE=America/New_York
+```
+
+### Commits
+- `36559c6` - Add daily email digest with modern design (5 AM ET)
