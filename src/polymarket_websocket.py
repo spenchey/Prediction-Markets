@@ -222,15 +222,26 @@ class PolymarketWebSocket:
             price = float(item.get("price", 0))
             amount_usd = size * price
 
-            # Parse timestamp
+            # Parse timestamp (can be in seconds or milliseconds)
             ts = item.get("timestamp")
             if isinstance(ts, int):
+                # Check if timestamp is in milliseconds (> year 3000 in seconds)
+                if ts > 32503680000:  # Year 3000 in seconds
+                    ts = ts / 1000  # Convert milliseconds to seconds
                 timestamp = datetime.fromtimestamp(ts)
             elif isinstance(ts, str):
                 try:
+                    # Try parsing as ISO format
                     timestamp = datetime.fromisoformat(ts.replace("Z", "+00:00"))
                 except ValueError:
-                    timestamp = datetime.now()
+                    try:
+                        # Try parsing as numeric string
+                        ts_num = float(ts)
+                        if ts_num > 32503680000:
+                            ts_num = ts_num / 1000
+                        timestamp = datetime.fromtimestamp(ts_num)
+                    except ValueError:
+                        timestamp = datetime.now()
             else:
                 timestamp = datetime.now()
 
