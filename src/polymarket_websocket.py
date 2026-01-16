@@ -316,7 +316,7 @@ class PolymarketWebSocket:
     def get_stats(self) -> Dict[str, Any]:
         """Get WebSocket statistics."""
         return {
-            "connected": self._ws is not None and self._ws.open if self._ws else False,
+            "connected": self.is_connected,
             "trades_received": self._trades_received,
             "last_trade_time": self._last_trade_time.isoformat() if self._last_trade_time else None,
             "reconnect_attempts": self._reconnect_attempts,
@@ -326,7 +326,13 @@ class PolymarketWebSocket:
     @property
     def is_connected(self) -> bool:
         """Check if WebSocket is connected."""
-        return self._ws is not None and self._ws.open if self._ws else False
+        if self._ws is None:
+            return False
+        try:
+            # websockets library uses 'state' or check if connection is still alive
+            return not self._ws.closed
+        except AttributeError:
+            return self._running
 
 
 class HybridTradeMonitor:
