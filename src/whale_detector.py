@@ -188,6 +188,9 @@ class WalletProfile:
     buy_volume_usd: float = 0.0
     sell_volume_usd: float = 0.0
 
+    # VIP tracking: count of large trades (for VIP qualification)
+    large_trades_count: int = 0  # Trades over VIP_LARGE_TRADE_THRESHOLD
+
     def add_trade_timestamp(self, timestamp: datetime):
         """Track trade timestamps for velocity calculation."""
         self.recent_trade_times.append(timestamp)
@@ -359,6 +362,46 @@ class WalletProfile:
             return 0.0
         return self.total_sells / self.total_trades
 
+    def is_vip(self, min_volume: float = 100000, min_win_rate: float = 0.55,
+               min_large_trades: int = 5) -> bool:
+        """
+        Check if wallet qualifies as VIP based on any of these criteria:
+        1. High total volume (default $100k+)
+        2. Good win rate (default 55%+ with enough resolved bets)
+        3. History of large trades (default 5+ trades over threshold)
+        """
+        # Criteria 1: High volume whale
+        if self.total_volume_usd >= min_volume:
+            return True
+
+        # Criteria 2: Successful track record
+        win_rate = self.win_rate
+        if win_rate is not None and win_rate >= min_win_rate:
+            return True
+
+        # Criteria 3: History of large trades
+        if self.large_trades_count >= min_large_trades:
+            return True
+
+        return False
+
+    def get_vip_reason(self, min_volume: float = 100000, min_win_rate: float = 0.55,
+                       min_large_trades: int = 5) -> Optional[str]:
+        """Get the reason why this wallet is VIP."""
+        reasons = []
+
+        if self.total_volume_usd >= min_volume:
+            reasons.append(f"${self.total_volume_usd:,.0f} lifetime volume")
+
+        win_rate = self.win_rate
+        if win_rate is not None and win_rate >= min_win_rate:
+            reasons.append(f"{win_rate:.0%} win rate")
+
+        if self.large_trades_count >= min_large_trades:
+            reasons.append(f"{self.large_trades_count} large trades historically")
+
+        return " | ".join(reasons) if reasons else None
+
 
 def severity_to_score(severity: str) -> int:
     """Convert categorical severity to numeric score (1-10)."""
@@ -473,6 +516,11 @@ class WhaleDetector:
         cluster_time_window_minutes: int = 5,   # Time window for cluster detection
         min_alert_threshold_usd: float = 450,   # Minimum USD for alerts (except cluster/exit)
         crypto_min_threshold_usd: float = 974,  # Higher threshold for crypto markets
+        # VIP wallet detection settings
+        vip_min_volume: float = 100_000,        # $100k lifetime volume to be VIP
+        vip_min_win_rate: float = 0.55,         # 55% win rate to be VIP
+        vip_min_large_trades: int = 5,          # 5+ large trades to be VIP
+        vip_large_trade_threshold: float = 5_000,  # What counts as "large"
     ):
         """
         Initialize the whale detector with comprehensive detection algorithms.
@@ -506,11 +554,17 @@ class WhaleDetector:
         self.min_alert_threshold_usd = min_alert_threshold_usd
         self.crypto_min_threshold_usd = crypto_min_threshold_usd
 
+        # VIP wallet detection thresholds
+        self.vip_min_volume = vip_min_volume
+        self.vip_min_win_rate = vip_min_win_rate
+        self.vip_min_large_trades = vip_min_large_trades
+        self.vip_large_trade_threshold = vip_large_trade_threshold
+
         # Alert types exempt from minimum threshold (valuable signals at any size)
-        self.exempt_alert_types = {"CLUSTER_ACTIVITY", "WHALE_EXIT"}
+        self.exempt_alert_types = {"CLUSTER_ACTIVITY", "WHALE_EXIT", "VIP_WALLET"}
 
         # Alert types that bypass crypto filtering (high-value signals)
-        self.crypto_exempt_types = {"CLUSTER_ACTIVITY", "WHALE_TRADE", "SMART_MONEY"}
+        self.crypto_exempt_types = {"CLUSTER_ACTIVITY", "WHALE_TRADE", "SMART_MONEY", "VIP_WALLET"}
 
         # Track wallet profiles (in production, store in database)
         self.wallet_profiles: Dict[str, WalletProfile] = {}
@@ -665,6 +719,10 @@ class WhaleDetector:
         elif trade.side.lower() == "sell":
             profile.total_sells += 1
             profile.sell_volume_usd += trade.amount_usd
+
+        # Track large trades for VIP qualification
+        if trade.amount_usd >= self.vip_large_trade_threshold:
+            profile.large_trades_count += 1
 
         # Track per-market position
         profile.update_position(
@@ -1150,6 +1208,27 @@ class WhaleDetector:
                 f"🧠 SMART MONEY: Wallet with {profile.win_rate:.0%} win rate placed ${trade.amount_usd:,.0f} bet",
                 severity_score
             ))
+
+        # 6b. VIP Wallet - ANY trade from high-volume, successful, or large-trade-history wallets
+        # Skip for anonymous traders
+        if not self._is_anonymous_trader(trade.trader_address):
+            is_vip = profile.is_vip(
+                min_volume=self.vip_min_volume,
+                min_win_rate=self.vip_min_win_rate,
+                min_large_trades=self.vip_min_large_trades
+            )
+            if is_vip:
+                vip_reason = profile.get_vip_reason(
+                    min_volume=self.vip_min_volume,
+                    min_win_rate=self.vip_min_win_rate,
+                    min_large_trades=self.vip_min_large_trades
+                )
+                severity_score = 8  # VIP trades are high priority
+                triggered_conditions.append((
+                    "VIP_WALLET",
+                    f"⭐ VIP WALLET: {vip_reason} - placed ${trade.amount_usd:,.0f} bet",
+                    severity_score
+                ))
 
         # ==========================================
         # NEW DETECTORS (7-11) - Inspired by Polymaster, PredictOS, PolyTrack

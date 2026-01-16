@@ -108,6 +108,13 @@ class Settings(BaseSettings):
     DISCORD_THREAD_ENTERTAINMENT: Optional[str] = None
     DISCORD_THREAD_WORLD: Optional[str] = None
     DISCORD_THREAD_OTHER: Optional[str] = None  # Fallback for uncategorized
+    DISCORD_THREAD_VIP: Optional[str] = None  # VIP wallet alerts thread
+
+    # VIP Wallet Detection Settings
+    VIP_MIN_TOTAL_VOLUME: float = 100000.0  # $100k lifetime volume to be VIP
+    VIP_MIN_WIN_RATE: float = 0.55  # 55% win rate to be VIP (if enough resolved)
+    VIP_MIN_LARGE_TRADES: int = 5  # 5+ trades over $5k to be VIP
+    VIP_LARGE_TRADE_THRESHOLD: float = 5000.0  # What counts as a "large trade"
 
     # Twitter Queue - private channel for high-value alerts to post to X
     DISCORD_TWITTER_WEBHOOK_URL: Optional[str] = None

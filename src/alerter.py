@@ -227,6 +227,9 @@ class DiscordAlert(AlertChannel):
             "Other": getattr(settings, 'DISCORD_THREAD_OTHER', None),
         }
 
+        # Special thread for VIP wallet alerts (overrides category routing)
+        self.vip_thread_id = getattr(settings, 'DISCORD_THREAD_VIP', None)
+
     def _get_thread_id_for_category(self, category: str) -> Optional[str]:
         """Get the appropriate thread ID for a category."""
         # Try exact match first
@@ -328,8 +331,13 @@ class DiscordAlert(AlertChannel):
             }
 
             # Build URL with thread_id as query parameter (required for forum channels)
-            # Use category-based routing if available
-            thread_id = self._get_thread_id_for_category(alert.category)
+            # VIP alerts go to VIP thread (overrides category routing)
+            if "VIP_WALLET" in alert.alert_types and self.vip_thread_id:
+                thread_id = self.vip_thread_id
+            else:
+                # Use category-based routing
+                thread_id = self._get_thread_id_for_category(alert.category)
+
             url = self.webhook_url
             if thread_id:
                 url = f"{self.webhook_url}?thread_id={thread_id}"
