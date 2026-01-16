@@ -1418,3 +1418,64 @@ The service gracefully degrades if the API key isn't set - existing functionalit
 ### Commits
 
 - `52b0fc4` - Add Claude Skills API integration for AI-powered whale analysis
+
+---
+
+## External Claude Skills Integration (2026-01-16)
+
+Additional skills from the community for enhanced analysis capabilities.
+
+### xlsx - Excel Report Generation
+
+**Source**: [anthropics/skills/xlsx](https://github.com/anthropics/skills/tree/main/skills/xlsx)
+
+Generate professional Excel reports of whale trades:
+- Daily/weekly trade summaries with formatting
+- Portfolio analysis spreadsheets
+- Market volume breakdowns with formulas
+- Financial model standards (color coding, currency formatting)
+
+**Key Features:**
+- Dynamic formulas (not hardcoded values)
+- Professional formatting (blue inputs, black formulas, green links)
+- Data analysis and visualization
+
+### d3-viz - Interactive Visualizations
+
+**Source**: [chrisvoncsefalvay/claude-d3js-skill](https://github.com/chrisvoncsefalvay/claude-d3js-skill)
+
+Create interactive D3.js charts for whale activity:
+- Trade volume over time (line charts)
+- Wallet activity patterns (heatmaps)
+- Market correlation networks (force-directed graphs)
+- Category distribution (pie/bar charts)
+
+**Key Features:**
+- Interactive tooltips, zoom, pan
+- Smooth transitions and animations
+- Works with React, Vue, vanilla JS
+
+### claude-scientific-skills - Statistical Analysis
+
+**Source**: [K-Dense-AI/claude-scientific-skills](https://github.com/K-Dense-AI/claude-scientific-skills)
+
+140+ scientific computing skills for advanced analysis:
+- Statistical pattern detection in trade data
+- Anomaly detection algorithms
+- ML-based trade predictions
+- Time series analysis
+
+**Key Libraries Available:**
+- scikit-learn (ML models)
+- pandas (data manipulation)
+- numpy (numerical computing)
+- PyTorch (deep learning)
+
+**Install:**
+```bash
+/plugin install scientific-skills@claude-scientific-skills
+```
+
+### Skills Discovery Resource
+
+For finding more skills: [awesome-claude-skills](https://github.com/travisvn/awesome-claude-skills)
