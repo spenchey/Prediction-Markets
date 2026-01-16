@@ -472,6 +472,7 @@ class WhaleDetector:
         contrarian_threshold: float = 0.15,     # Bet on outcome with <15% odds
         cluster_time_window_minutes: int = 5,   # Time window for cluster detection
         min_alert_threshold_usd: float = 450,   # Minimum USD for alerts (except cluster/exit)
+        crypto_min_threshold_usd: float = 974,  # Higher threshold for crypto markets
     ):
         """
         Initialize the whale detector with comprehensive detection algorithms.
@@ -503,9 +504,13 @@ class WhaleDetector:
         self.contrarian_threshold = contrarian_threshold
         self.cluster_time_window = timedelta(minutes=cluster_time_window_minutes)
         self.min_alert_threshold_usd = min_alert_threshold_usd
+        self.crypto_min_threshold_usd = crypto_min_threshold_usd
 
         # Alert types exempt from minimum threshold (valuable signals at any size)
         self.exempt_alert_types = {"CLUSTER_ACTIVITY", "WHALE_EXIT"}
+
+        # Alert types that bypass crypto filtering (high-value signals)
+        self.crypto_exempt_types = {"CLUSTER_ACTIVITY", "WHALE_TRADE", "SMART_MONEY"}
 
         # Track wallet profiles (in production, store in database)
         self.wallet_profiles: Dict[str, WalletProfile] = {}
@@ -1290,6 +1295,13 @@ class WhaleDetector:
             category=market_category,
             position_action=position_action,
         )
+
+        # CRYPTO FILTERING: Higher threshold for crypto markets unless high-value signal
+        if market_category == "Crypto":
+            has_exempt_type = any(atype in self.crypto_exempt_types for atype in alert_types)
+            if trade.amount_usd < self.crypto_min_threshold_usd and not has_exempt_type:
+                logger.debug(f"Filtered crypto alert: ${trade.amount_usd:.0f} < ${self.crypto_min_threshold_usd} threshold")
+                return []
 
         return [consolidated_alert]
     
