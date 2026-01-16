@@ -1093,3 +1093,78 @@ WS_RECONNECT_DELAY: float = 5.0
 - Hybrid approach gives best of both worlds (speed + reliability)
 - Always check library documentation for attribute names (`.closed` vs `.open`)
 - Railway deploys from `main` branch, not `master`
+
+---
+
+## Session Log (2026-01-16) - Category Detection Fix
+
+### Issue: Alerts Going to Wrong Discord Threads
+
+**Problem**: All alerts were showing "Category: Other" and going to the "Whale Alerts" thread instead of category-specific threads (Politics, Crypto, Finance, etc.).
+
+**Root Causes**:
+1. WebSocket trades include `_ws_title` but category wasn't being detected from it
+2. Kalshi trades don't include market questions at all - only ticker IDs
+3. The `market_categories` dict was only populated during market fetch, not during trade analysis
+
+### Solution: Two-Part Fix
+
+#### Part 1: Auto-detect category from question text (commit 7028d4b)
+Added `_detect_category_from_text()` method to WhaleDetector that detects category using keyword matching when market_question is provided.
+
+#### Part 2: Kalshi ticker pattern detection (commit ad1ea13)
+Extended category detection to also work with Kalshi market tickers:
+
+| Ticker Pattern | Category |
+|---------------|----------|
+| KXNBA, KXNFL, KXMLB, KXMVE, KXATP, KXLIGUE | Sports |
+| KXBTC, KXETH, KXSOL | Crypto |
+| KXEO, KXCPI, KXGDP, KXFED | Finance |
+| KXTRUMP, KXDJTVO, KXPRES | Politics |
+
+### Code Changes
+**File**: `src/whale_detector.py`
+
+```python
+def _detect_category_from_text(self, text: str, market_id: str = None) -> str:
+    """Detect category from question text OR Kalshi ticker patterns."""
+    # First try keyword matching on text
+    if text:
+        # ... keyword matching ...
+
+    # Then try Kalshi ticker patterns
+    if market_id:
+        if "KXNBA" in market_id or "KXNFL" in market_id:
+            return "Sports"
+        if "KXBTC" in market_id or "KXETH" in market_id:
+            return "Crypto"
+        # etc.
+```
+
+### Result
+- Polymarket WebSocket alerts now route to correct category threads
+- Kalshi alerts route based on ticker pattern
+- Alerts should appear in Politics, Crypto, Finance, Sports threads instead of all going to "Other"
+
+### Verification (2026-01-16)
+
+Verified category routing is working correctly:
+
+1. **Test alerts sent** to each category thread (Politics, Crypto, Finance, Other) - all returned HTTP 204 success
+2. **User confirmed** test messages appeared in correct Discord threads
+3. **Health endpoint** showed 25+ alerts generated since deployment
+
+**Category Detection Flow:**
+1. WebSocket trade arrives with `_ws_title` (market question)
+2. `_detect_category_from_text()` checks keywords in question text
+3. If no match, checks Kalshi ticker patterns (KXNBA, KXBTC, etc.)
+4. Category cached in `market_categories` dict for future trades
+5. Alert sent to category-specific Discord thread via `_get_thread_id_for_category()`
+
+**Thread Routing Confirmed Working:**
+| Category | Thread | Status |
+|----------|--------|--------|
+| Politics | 🏛️ Politics Alerts | ✅ Verified |
+| Crypto | ₿ Crypto Alerts | ✅ Verified |
+| Finance | 📈 Finance Alerts | ✅ Verified |
+| Other | Whale Alerts | ✅ Verified |
