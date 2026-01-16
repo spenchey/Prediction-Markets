@@ -367,24 +367,27 @@ async def health_check():
         health["database"] = f"error: {str(e)[:50]}"
 
     # Check monitor status
-    if hybrid_monitor:
-        health["monitor"] = "hybrid"
-        health["monitor_mode"] = "WebSocket + Polling backup"
-        ws_stats = hybrid_monitor.get_stats()
-        health["websocket"] = {
-            "connected": ws_stats.get("websocket", {}).get("connected", False),
-            "trades_received": ws_stats.get("ws_trades_processed", 0),
-            "alerts_generated": ws_stats.get("ws_alerts_generated", 0)
-        }
-        health["polling"] = {
-            "trades_received": ws_stats.get("poll_trades_processed", 0),
-            "alerts_generated": ws_stats.get("poll_alerts_generated", 0)
-        }
-    elif monitor and monitor_task:
-        health["monitor"] = "running" if not monitor_task.done() else "stopped"
-        health["monitor_mode"] = "Polling only"
-    else:
-        health["monitor"] = "not_started"
+    try:
+        if hybrid_monitor:
+            health["monitor"] = "hybrid"
+            health["monitor_mode"] = "WebSocket + Polling backup"
+            ws_stats = hybrid_monitor.get_stats()
+            health["websocket"] = {
+                "connected": ws_stats.get("websocket", {}).get("connected", False),
+                "trades_received": ws_stats.get("ws_trades_processed", 0),
+                "alerts_generated": ws_stats.get("ws_alerts_generated", 0)
+            }
+            health["polling"] = {
+                "trades_received": ws_stats.get("poll_trades_processed", 0),
+                "alerts_generated": ws_stats.get("poll_alerts_generated", 0)
+            }
+        elif monitor and monitor_task:
+            health["monitor"] = "running" if not monitor_task.done() else "stopped"
+            health["monitor_mode"] = "Polling only"
+        else:
+            health["monitor"] = "not_started"
+    except Exception as e:
+        health["monitor"] = f"error: {str(e)[:100]}"
 
     # Always return 200 so healthcheck passes
     return health
