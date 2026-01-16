@@ -334,9 +334,11 @@ class DiscordAlert(AlertChannel):
             # VIP alerts go to VIP thread (overrides category routing)
             if "VIP_WALLET" in alert.alert_types and self.vip_thread_id:
                 thread_id = self.vip_thread_id
+                logger.debug(f"Routing to VIP thread: {thread_id}")
             else:
                 # Use category-based routing
                 thread_id = self._get_thread_id_for_category(alert.category)
+                logger.info(f"📍 Routing alert to {alert.category} thread: {thread_id}")
 
             url = self.webhook_url
             if thread_id:

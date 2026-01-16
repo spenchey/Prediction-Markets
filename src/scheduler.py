@@ -581,15 +581,19 @@ class DigestScheduler:
         category_alerts = self._group_alerts_by_category(digest)
 
         # Send digest to each category thread that has alerts
+        logger.info(f"📊 Digest has {len(digest.top_trades or [])} top trades to categorize")
         for category, alerts in category_alerts.items():
+            logger.info(f"📊 Category '{category}': {len(alerts)} alerts")
             if not alerts:
                 continue
 
             thread_id = discord_channel.category_threads.get(category)
             if not thread_id:
+                logger.warning(f"No thread ID configured for category: {category}")
                 continue  # Skip categories without configured threads
 
             try:
+                logger.info(f"📊 Sending {category} digest to thread {thread_id}")
                 category_digest = self._build_category_digest(
                     category, alerts, digest.period_start, digest.period_end, digest.report_type
                 )
