@@ -494,9 +494,33 @@ class HybridTradeMonitor:
         market_question = getattr(trade, '_ws_title', None)
         slug = getattr(trade, '_ws_slug', None)
 
-        # Cache market info
+        # Cache market info if we have it
         if market_question:
             self._market_cache[trade.market_id] = market_question
+        else:
+            # Check cache first
+            if trade.market_id in self._market_cache:
+                market_question = self._market_cache[trade.market_id]
+            else:
+                # Fetch from API if not in cache and we have a client
+                if self.clients:
+                    try:
+                        from .polymarket_client import PolymarketClient
+                        polymarket_client = None
+                        for client in self.clients:
+                            if isinstance(client, PolymarketClient):
+                                polymarket_client = client
+                                break
+
+                        if polymarket_client:
+                            async with polymarket_client as c:
+                                market_info = await c.get_market_by_id(trade.market_id)
+                                if market_info and market_info.question:
+                                    market_question = market_info.question
+                                    self._market_cache[trade.market_id] = market_question
+                                    logger.debug(f"Fetched market question from API: {market_question[:50]}...")
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch market info for {trade.market_id[:16]}...: {e}")
 
         # Analyze the trade
         market_questions = {trade.market_id: market_question} if market_question else {}
