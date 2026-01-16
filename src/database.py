@@ -93,6 +93,7 @@ class AlertRecord(Base):
     trader_address = Column(String, index=True)
     market_id = Column(String)
     market_question = Column(String)
+    category = Column(String, index=True)  # Auto-detected category for routing
     outcome = Column(String)
     side = Column(String)
     
@@ -315,6 +316,7 @@ class Database:
                 trader_address=alert.trade.trader_address,
                 market_id=alert.trade.market_id,
                 market_question=alert.market_question,
+                category=getattr(alert, 'category', None),  # Store category for digest routing
                 outcome=alert.trade.outcome,
                 side=alert.trade.side,
                 is_new_wallet=alert.wallet_profile.is_new_wallet if alert.wallet_profile else None,
@@ -422,6 +424,7 @@ class Database:
                     "amount": a.trade_amount_usd,
                     "market": a.market_question,
                     "market_id": a.market_id,  # Include for Kalshi ticker-based category detection
+                    "category": a.category,  # Stored category from alert creation
                     "outcome": a.outcome,
                     "wallet": a.trader_address,
                     "alert_type": a.alert_type,

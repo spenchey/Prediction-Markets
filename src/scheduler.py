@@ -608,10 +608,16 @@ class DigestScheduler:
 
         top_trades = digest.top_trades or []
         for trade in top_trades:
-            market_text = trade.get('market') or ''
-            market_id = trade.get('market_id') or ''
-            category = self._detect_category(market_text, market_id)
-            logger.debug(f"📊 Trade categorized: market='{market_text[:50] if market_text else 'None'}', market_id='{market_id}' -> {category}")
+            # First try stored category (from database)
+            category = trade.get('category')
+            if not category or category not in categories:
+                # Fall back to detection from text/market_id
+                market_text = trade.get('market') or ''
+                market_id = trade.get('market_id') or ''
+                category = self._detect_category(market_text, market_id)
+                logger.debug(f"📊 Trade categorized (detected): market='{market_text[:50] if market_text else 'None'}', market_id='{market_id}' -> {category}")
+            else:
+                logger.debug(f"📊 Trade categorized (stored): {category}")
             grouped[category].append(trade)
 
         return grouped
