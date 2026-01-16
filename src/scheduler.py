@@ -557,20 +557,151 @@ class DigestScheduler:
         logger.info(f"📧 Weekly digest sent ({digest.total_alerts} alerts)")
 
     async def _send_discord_digest(self, digest: DigestReport):
-        """Send digest to Discord channel."""
+        """Send category-specific digests to each Discord thread."""
         if not self.alerter or not hasattr(self.alerter, 'channels'):
             return
 
         # Find the Discord channel
         from .alerter import DiscordAlert
+        discord_channel = None
         for channel in self.alerter.channels:
             if isinstance(channel, DiscordAlert) and channel.is_configured():
-                try:
-                    discord_payload = digest.to_discord_embed()
-                    await channel.send_digest(discord_payload)
-                    return
-                except Exception as e:
-                    logger.error(f"Error sending Discord digest: {e}")
+                discord_channel = channel
+                break
+
+        if not discord_channel:
+            return
+
+        # Group alerts by category
+        category_alerts = self._group_alerts_by_category(digest)
+
+        # Send digest to each category thread that has alerts
+        for category, alerts in category_alerts.items():
+            if not alerts:
+                continue
+
+            thread_id = discord_channel.category_threads.get(category)
+            if not thread_id:
+                continue  # Skip categories without configured threads
+
+            try:
+                category_digest = self._build_category_digest(
+                    category, alerts, digest.period_start, digest.period_end, digest.report_type
+                )
+                await self._send_category_digest(discord_channel, category_digest, thread_id)
+            except Exception as e:
+                logger.error(f"Error sending {category} digest: {e}")
+
+    def _group_alerts_by_category(self, digest: DigestReport) -> Dict[str, List[Dict]]:
+        """Group top trades by detected category."""
+        categories = ["Politics", "Crypto", "Sports", "Finance", "Entertainment", "World", "Other"]
+        grouped = {cat: [] for cat in categories}
+
+        for trade in digest.top_trades:
+            market_text = trade.get('market') or ''
+            category = self._detect_category(market_text)
+            grouped[category].append(trade)
+
+        return grouped
+
+    def _detect_category(self, text: str) -> str:
+        """Detect category from market question text."""
+        if not text:
+            return "Other"
+
+        text_lower = text.lower()
+
+        category_keywords = {
+            "Politics": ["trump", "biden", "election", "president", "congress", "senate",
+                        "vote", "democrat", "republican", "governor", "party", "nominee",
+                        "desantis", "harris", "vance", "pelosi"],
+            "Crypto": ["bitcoin", "btc", "ethereum", "eth", "crypto", "token", "blockchain",
+                      "solana", "sol", "dogecoin", "doge", "ripple", "xrp"],
+            "Sports": ["nfl", "nba", "mlb", "nhl", "super bowl", "championship", "playoff",
+                      "world series", " vs ", " vs. ", " @ ", "game", "match"],
+            "Finance": ["stock", "s&p", "nasdaq", "fed", "interest rate", "inflation",
+                       "gdp", "recession", "dow", "treasury", "fomc", "cpi"],
+            "Entertainment": ["oscar", "grammy", "emmy", "movie", "album", "celebrity",
+                            "twitter", "streaming", "netflix", "taylor swift"],
+            "World": ["war", "ukraine", "russia", "china", "iran", "israel", "military",
+                     "invasion", "ceasefire", "nato", "sanctions", "gaza", "putin"],
+        }
+
+        for category, keywords in category_keywords.items():
+            if any(kw in text_lower for kw in keywords):
+                return category
+
+        return "Other"
+
+    def _build_category_digest(
+        self, category: str, trades: List[Dict],
+        period_start: datetime, period_end: datetime, report_type: str
+    ) -> Dict[str, Any]:
+        """Build a Discord embed payload for a category-specific digest."""
+        period_label = "Daily" if report_type == "daily" else "Weekly"
+        date_range = f"{period_start.strftime('%b %d')} - {period_end.strftime('%b %d, %Y')}"
+
+        # Category emoji
+        category_emoji = {
+            "Politics": "🏛️", "Crypto": "₿", "Sports": "⚽",
+            "Finance": "📈", "Entertainment": "🎬", "World": "🌍", "Other": "📌"
+        }.get(category, "📌")
+
+        # Total volume for this category
+        total_volume = sum(t.get('amount', 0) for t in trades)
+
+        # Top trades text
+        top_trades_text = ""
+        for i, trade in enumerate(trades[:5]):
+            amount = trade.get('amount', 0)
+            market = (trade.get('market') or 'Unknown')[:45]
+            outcome = trade.get('outcome', 'N/A')
+            top_trades_text += f"**{i+1}.** ${amount:,.0f} - {market}... ({outcome})\n"
+        top_trades_text = top_trades_text or "No trades"
+
+        # Color based on volume
+        if total_volume >= 50000:
+            color = 0x00d395  # Green
+        elif total_volume >= 20000:
+            color = 0xffa500  # Orange
+        else:
+            color = 0x5865F2  # Discord blue
+
+        return {
+            "embeds": [{
+                "title": f"{category_emoji} {category} {period_label} Summary",
+                "description": f"**{date_range}**\n\n{category} whale activity summary.",
+                "color": color,
+                "fields": [
+                    {
+                        "name": "📊 Stats",
+                        "value": f"**{len(trades)}** Alerts\n**${total_volume:,.0f}** Volume",
+                        "inline": True
+                    },
+                    {
+                        "name": "💰 Top Trades",
+                        "value": top_trades_text,
+                        "inline": False
+                    }
+                ],
+                "footer": {"text": f"Whale Tracker • {category} {period_label} Digest"},
+                "timestamp": period_end.isoformat()
+            }],
+            "username": "Whale Tracker"
+        }
+
+    async def _send_category_digest(self, discord_channel, payload: dict, thread_id: str):
+        """Send a category digest to a specific Discord thread."""
+        import httpx
+
+        url = f"{discord_channel.webhook_url}?thread_id={thread_id}"
+
+        async with httpx.AsyncClient() as client:
+            r = await client.post(url, json=payload, timeout=10.0)
+            if r.status_code in [200, 204]:
+                logger.info(f"📊 Discord category digest sent to thread {thread_id}")
+            else:
+                logger.error(f"Discord category digest error: {r.status_code}")
 
 
 # =========================================
