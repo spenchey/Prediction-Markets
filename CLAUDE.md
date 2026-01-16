@@ -988,3 +988,108 @@ Created `#sports-alerts` text channel:
 - **Channel ID**: `1461465320140312819`
 - **Access**: Private, requires `sports` role
 - **Purpose**: Dedicated channel for sports add-on subscribers ($4.99/mo)
+
+---
+
+## Session Log (2026-01-16) - Railway OOM & Hybrid WebSocket Monitor
+
+### Issue 1: Railway Out-of-Memory Email
+
+**Problem**: Received OOM email from Railway, but app continued running (auto-restart).
+
+**Root Cause**: Trial plan limited to 512MB RAM. In-memory caches (`wallet_profiles`, `market_stats`, `wallet_clusters`) can grow unbounded.
+
+**Solution**: Upgraded Railway plan from Trial to Hobby ($5/month, up to 8GB RAM).
+
+### Issue 2: Missed $66k Greenland Trade
+
+**Problem**: A $66,000 bet on Trump acquiring Greenland wasn't caught by alerts.
+
+**Root Causes Identified**:
+1. Trade fetch limit was only 100 per poll
+2. Poll interval was 60 seconds (too slow)
+3. High-frequency 15-minute Bitcoin markets creating noise
+
+**Solution**: Implemented multiple improvements:
+1. Increased fetch limit from 100 → 500 trades per poll
+2. Added `after_timestamp` parameter for time-based queries (prevents gaps)
+3. Added secondary whale check specifically for trades >= threshold
+4. Reduced poll interval from 60s → 15s (when using polling only)
+5. Added filtering for 15-minute Bitcoin markets
+
+### Issue 3: Competition Analysis
+
+**Research**: Investigated how competitors handle real-time trades:
+- **Polywhaler**: Private tracker, unclear implementation
+- **PolyTrack**: Uses WebSocket for real-time data
+- **Oddpool**: Also uses WebSocket
+
+**Finding**: WebSocket provides ~100ms latency vs 15-60s polling.
+
+### Solution: Hybrid WebSocket + Polling Monitor
+
+**Implementation**: Created `src/polymarket_websocket.py` with:
+
+```python
+class PolymarketWebSocket:
+    """WebSocket client for real-time Polymarket trade data."""
+    # Connects to wss://ws-live-data.polymarket.com
+    # Subscribes to activity/trades topic
+    # Parses trade messages and calls on_trade callback
+
+class HybridTradeMonitor:
+    """Combines WebSocket (primary) and polling (backup)."""
+    # WebSocket for real-time Polymarket trades
+    # Polling every 30s as backup for all platforms including Kalshi
+```
+
+**Configuration** (added to `src/config.py`):
+```python
+POLYMARKET_WS_URL: str = "wss://ws-live-data.polymarket.com"
+USE_HYBRID_MONITOR: bool = True
+POLL_INTERVAL: int = 30  # Backup polling (30s with hybrid, 15s otherwise)
+WS_RECONNECT_DELAY: float = 5.0
+```
+
+### Deployment Issues & Fixes
+
+1. **Wrong branch**: Pushed to `master` but Railway deploys from `main`
+   - Fix: `git push origin master:main`
+
+2. **Timestamp parsing error** ("year 58014 is out of range"):
+   - Root cause: WebSocket timestamps in milliseconds, not seconds
+   - Fix: Check if timestamp > 32503680000, divide by 1000
+
+3. **Health endpoint error** ("'ClientConnection' object has no attribute 'open'"):
+   - Root cause: websockets library uses `.closed`, not `.open`
+   - Fix: Changed `self._ws.open` to `not self._ws.closed`
+
+### Final Health Check Result
+```json
+{
+  "status": "ok",
+  "monitor": "hybrid",
+  "websocket": {"connected": true, "trades_received": 6961},
+  "polling": {"trades_received": 2505, "alerts_generated": 22}
+}
+```
+
+### Files Changed
+- `src/config.py` - Added WebSocket and hybrid monitor settings
+- `src/polymarket_client.py` - Increased limit to 500, added `after_timestamp`
+- `src/kalshi_client.py` - Added pagination for 500 trades, `after_timestamp`
+- `src/whale_detector.py` - Added 15-min BTC filtering, secondary whale check
+- `src/polymarket_websocket.py` - **NEW** - WebSocket client and HybridTradeMonitor
+- `src/main.py` - Integrated hybrid monitor, updated health endpoint
+
+### Commits
+- `9b18bb7` - Improve trade fetching to prevent missing large trades
+- `62a54fe` - Implement hybrid WebSocket + polling monitor for real-time trades
+- `2561ae3` - Fix WebSocket timestamp parsing (milliseconds to seconds)
+- `4084c0b` - Fix WebSocket is_connected to use .closed instead of .open
+
+### Key Learnings
+- WebSocket provides much faster trade detection (~100ms vs 15-60s)
+- Hybrid approach gives best of both worlds (speed + reliability)
+- Always check library documentation for attribute names (`.closed` vs `.open`)
+- Railway deploys from `main` branch, not `master`
