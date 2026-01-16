@@ -1168,3 +1168,53 @@ Verified category routing is working correctly:
 | Crypto | ₿ Crypto Alerts | ✅ Verified |
 | Finance | 📈 Finance Alerts | ✅ Verified |
 | Other | Whale Alerts | ✅ Verified |
+
+---
+
+## Session Log (2026-01-16) - VIP Wallet Alert System
+
+### Feature: VIP Wallet Alerts
+
+**Request**: Alert whenever VIP wallets make ANY trade, with dedicated Discord thread.
+
+### VIP Wallet Criteria
+
+A wallet qualifies as VIP if it meets ANY of these criteria:
+
+| Criteria | Default Threshold | Config Variable |
+|----------|-------------------|-----------------|
+| High lifetime volume | $100,000+ | `VIP_MIN_TOTAL_VOLUME` |
+| Good win rate | 55%+ (with 10+ resolved) | `VIP_MIN_WIN_RATE` |
+| Large trade history | 5+ trades over $5k | `VIP_MIN_LARGE_TRADES` |
+
+### Implementation
+
+**Files Changed:**
+- `src/config.py` - Added VIP settings and `DISCORD_THREAD_VIP`
+- `src/whale_detector.py` - Added `VIP_WALLET` alert type, `is_vip()` method to WalletProfile
+- `src/alerter.py` - Added VIP thread routing (overrides category routing)
+
+**New Alert Type:**
+```
+⭐ VIP WALLET: $150,000 lifetime volume | 62% win rate - placed $2,500 bet
+```
+
+**Key Features:**
+- VIP_WALLET alerts trigger for ANY trade from VIP wallets (no minimum amount)
+- Bypasses both minimum threshold ($450) and crypto threshold ($974)
+- Routes to dedicated VIP thread (overrides category-based routing)
+- Shows VIP reason: volume, win rate, or large trade count
+
+### Discord Thread
+
+| Thread | ID | Description |
+|--------|----|-----------  |
+| ⭐ VIP Wallet Alerts | `1461798236506554551` | Trades from VIP wallets |
+
+### Environment Variable
+```bash
+DISCORD_THREAD_VIP=1461798236506554551
+```
+
+### Commits
+- `096f1c4` - Add VIP wallet alert system
