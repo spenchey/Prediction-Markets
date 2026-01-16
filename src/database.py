@@ -194,12 +194,42 @@ class Database:
     async def init(self):
         """
         Initialize the database - create all tables.
-        
+
         Call this once when your app starts.
         """
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+
+        # Run migrations for existing tables (SQLAlchemy create_all doesn't add new columns)
+        await self._run_migrations()
         logger.info(f"✅ Database initialized: {self.database_url}")
+
+    async def _run_migrations(self):
+        """Run any pending schema migrations."""
+        from sqlalchemy import text
+
+        async with self.async_session() as session:
+            # Add category column to alerts table if it doesn't exist
+            try:
+                if "postgresql" in self.database_url:
+                    # PostgreSQL: Add column if not exists
+                    await session.execute(text(
+                        "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS category VARCHAR;"
+                    ))
+                elif "sqlite" in self.database_url:
+                    # SQLite: Check if column exists first
+                    result = await session.execute(text(
+                        "PRAGMA table_info(alerts);"
+                    ))
+                    columns = [row[1] for row in result.fetchall()]
+                    if 'category' not in columns:
+                        await session.execute(text(
+                            "ALTER TABLE alerts ADD COLUMN category TEXT;"
+                        ))
+                await session.commit()
+                logger.info("✅ Database migrations completed")
+            except Exception as e:
+                logger.warning(f"Migration note (may be harmless): {e}")
     
     async def close(self):
         """Close database connections."""
