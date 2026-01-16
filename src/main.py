@@ -33,6 +33,7 @@ from .whale_detector import WhaleDetector, WhaleAlert, TradeMonitor
 from .polymarket_websocket import HybridTradeMonitor
 from .alerter import Alerter, create_default_alerter
 from .scheduler import DigestScheduler, create_digest_scheduler
+from .routers.ai_analysis import router as ai_router
 
 # =========================================
 # CONFIGURE LOGGING
@@ -307,6 +308,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include AI analysis router (Claude Skills integration)
+app.include_router(ai_router)
 
 
 # =========================================
