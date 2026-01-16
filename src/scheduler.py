@@ -213,6 +213,82 @@ class DigestReport:
 
         return "\n".join(lines)
 
+    def to_discord_embed(self) -> Dict[str, Any]:
+        """Generate Discord embed payload for the digest."""
+        period_label = "Daily" if self.report_type == "daily" else "Weekly"
+        date_range = f"{self.period_start.strftime('%b %d')} - {self.period_end.strftime('%b %d, %Y')}"
+
+        # Alert type breakdown
+        type_breakdown = "\n".join(
+            f"• **{t.replace('_', ' ').title()}**: {c}"
+            for t, c in sorted(self.alerts_by_type.items(), key=lambda x: x[1], reverse=True)[:8]
+        ) or "No alerts"
+
+        # Top trades
+        top_trades_text = ""
+        for i, trade in enumerate(self.top_trades[:5]):
+            amount = trade.get('amount', 0)
+            market = (trade.get('market') or 'Unknown')[:50]
+            outcome = trade.get('outcome', 'N/A')
+            top_trades_text += f"**{i+1}.** ${amount:,.0f} - {market}... ({outcome})\n"
+        top_trades_text = top_trades_text or "No significant trades"
+
+        # Top wallets
+        top_wallets_text = ""
+        for wallet in self.top_wallets[:5]:
+            addr = wallet.get('address', '')[:12]
+            vol = wallet.get('volume', 0)
+            win_rate = wallet.get('win_rate')
+            wr_text = f" ({win_rate:.0%} WR)" if win_rate else ""
+            top_wallets_text += f"• `{addr}...` - ${vol:,.0f}{wr_text}\n"
+        top_wallets_text = top_wallets_text or "No wallet data"
+
+        # Color based on volume
+        if self.total_volume_tracked >= 100000:
+            color = 0x00d395  # Green - high volume
+        elif self.total_volume_tracked >= 50000:
+            color = 0xffa500  # Orange - medium volume
+        else:
+            color = 0x5865F2  # Discord blue - normal
+
+        return {
+            "embeds": [{
+                "title": f"🐋 {period_label} Whale Report",
+                "description": f"**{date_range}**\n\nSummary of whale activity over the past {'24 hours' if self.report_type == 'daily' else 'week'}.",
+                "color": color,
+                "fields": [
+                    {
+                        "name": "📊 Summary",
+                        "value": f"**{self.total_alerts}** Alerts\n**${self.total_volume_tracked:,.0f}** Volume\n**{len(self.smart_money_activity)}** Smart Money",
+                        "inline": True
+                    },
+                    {
+                        "name": "🆕 New Whales",
+                        "value": f"**{len(self.new_wallets_of_interest)}** wallets",
+                        "inline": True
+                    },
+                    {
+                        "name": "🚨 Alert Breakdown",
+                        "value": type_breakdown,
+                        "inline": False
+                    },
+                    {
+                        "name": "💰 Top Trades",
+                        "value": top_trades_text,
+                        "inline": False
+                    },
+                    {
+                        "name": "🏆 Top Wallets",
+                        "value": top_wallets_text,
+                        "inline": False
+                    }
+                ],
+                "footer": {"text": f"Whale Tracker • {period_label} Digest"},
+                "timestamp": self.period_end.isoformat()
+            }],
+            "username": "Whale Tracker"
+        }
+
 
 class DigestScheduler:
     """
@@ -424,7 +500,7 @@ class DigestScheduler:
 
     async def send_daily_digest(self, subscriber_emails: List[str] = None):
         """
-        Send daily digest email to subscribers.
+        Send daily digest to subscribers via email and Discord.
 
         Args:
             subscriber_emails: List of emails (defaults to settings.ALERT_EMAIL)
@@ -445,14 +521,15 @@ class DigestScheduler:
                 html_content=digest.to_html(),
                 text_content=digest.to_plain_text()
             )
-        else:
-            logger.warning("Alerter does not support digest emails")
+
+        # Send via Discord channel
+        await self._send_discord_digest(digest)
 
         logger.info(f"📧 Daily digest sent ({digest.total_alerts} alerts)")
 
     async def send_weekly_digest(self, subscriber_emails: List[str] = None):
         """
-        Send weekly digest email to subscribers.
+        Send weekly digest to subscribers via email and Discord.
 
         Args:
             subscriber_emails: List of emails (defaults to settings.ALERT_EMAIL)
@@ -473,10 +550,27 @@ class DigestScheduler:
                 html_content=digest.to_html(),
                 text_content=digest.to_plain_text()
             )
-        else:
-            logger.warning("Alerter does not support digest emails")
+
+        # Send via Discord channel
+        await self._send_discord_digest(digest)
 
         logger.info(f"📧 Weekly digest sent ({digest.total_alerts} alerts)")
+
+    async def _send_discord_digest(self, digest: DigestReport):
+        """Send digest to Discord channel."""
+        if not self.alerter or not hasattr(self.alerter, 'channels'):
+            return
+
+        # Find the Discord channel
+        from .alerter import DiscordAlert
+        for channel in self.alerter.channels:
+            if isinstance(channel, DiscordAlert) and channel.is_configured():
+                try:
+                    discord_payload = digest.to_discord_embed()
+                    await channel.send_digest(discord_payload)
+                    return
+                except Exception as e:
+                    logger.error(f"Error sending Discord digest: {e}")
 
 
 # =========================================

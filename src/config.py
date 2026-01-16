@@ -109,6 +109,7 @@ class Settings(BaseSettings):
     DISCORD_THREAD_WORLD: Optional[str] = None
     DISCORD_THREAD_OTHER: Optional[str] = None  # Fallback for uncategorized
     DISCORD_THREAD_VIP: Optional[str] = None  # VIP wallet alerts thread
+    DISCORD_THREAD_DIGEST: Optional[str] = None  # Daily/weekly digest thread
 
     # VIP Wallet Detection Settings
     VIP_MIN_TOTAL_VOLUME: float = 100000.0  # $100k lifetime volume to be VIP

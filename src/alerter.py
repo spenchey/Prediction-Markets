@@ -378,6 +378,53 @@ class DiscordAlert(AlertChannel):
             logger.error(f"Discord error: {e}")
         return False
 
+    async def send_digest(self, payload: dict) -> bool:
+        """
+        Send a digest report to Discord.
+
+        Args:
+            payload: Discord embed payload from DigestReport.to_discord_embed()
+        """
+        if not self.is_configured():
+            return False
+
+        try:
+            import httpx
+
+            # Use digest thread if configured, otherwise fall back to "Other" thread
+            digest_thread_id = getattr(settings, 'DISCORD_THREAD_DIGEST', None)
+            thread_id = digest_thread_id or self.category_threads.get("Other") or self.thread_id
+
+            url = self.webhook_url
+            if thread_id:
+                url = f"{self.webhook_url}?thread_id={thread_id}"
+
+            async with httpx.AsyncClient() as client:
+                r = await client.post(url, json=payload, timeout=10.0)
+
+                if r.status_code in [200, 204]:
+                    logger.info("📊 Discord digest sent")
+                    return True
+
+                # Handle forum channel error
+                if r.status_code == 400:
+                    try:
+                        error_data = r.json()
+                        if error_data.get("code") == 220001:
+                            # Forum channel requires thread_name
+                            payload["thread_name"] = "📊 Daily Digest"
+                            r2 = await client.post(self.webhook_url, json=payload, timeout=10.0)
+                            if r2.status_code in [200, 204]:
+                                logger.info("📊 Discord digest sent (new thread)")
+                                return True
+                    except Exception:
+                        pass
+                logger.error(f"Discord digest error: {r.status_code} - {r.text}")
+
+        except Exception as e:
+            logger.error(f"Discord digest error: {e}")
+        return False
+
     def is_configured(self) -> bool: return bool(self.webhook_url)
 
 
