@@ -45,7 +45,8 @@ class DigestReport:
 
         # Generate top trades cards
         trade_cards = ""
-        for i, trade in enumerate(self.top_trades[:5]):
+        top_trades = self.top_trades or []
+        for i, trade in enumerate(top_trades[:5]):
             amount = trade.get('amount', 0)
             market = (trade.get('market') or 'Unknown Market')[:80]
             outcome = trade.get('outcome', 'N/A')
@@ -200,15 +201,17 @@ class DigestReport:
             "💰 TOP TRADES"
         ])
 
-        for trade in self.top_trades[:5]:
-            lines.append(f"  ${trade.get('amount', 0):,.0f} - {trade.get('market', 'Unknown')[:40]}...")
+        top_trades = self.top_trades or []
+        for trade in top_trades[:5]:
+            lines.append(f"  ${trade.get('amount', 0):,.0f} - {(trade.get('market') or 'Unknown')[:40]}...")
 
         lines.extend([
             "",
             "🏆 TOP WALLETS"
         ])
 
-        for wallet in self.top_wallets[:5]:
+        top_wallets = self.top_wallets or []
+        for wallet in top_wallets[:5]:
             lines.append(f"  {wallet.get('address', '')[:15]}... - ${wallet.get('volume', 0):,.0f}")
 
         return "\n".join(lines)
@@ -226,7 +229,8 @@ class DigestReport:
 
         # Top trades
         top_trades_text = ""
-        for i, trade in enumerate(self.top_trades[:5]):
+        top_trades = self.top_trades or []
+        for i, trade in enumerate(top_trades[:5]):
             amount = trade.get('amount', 0)
             market = (trade.get('market') or 'Unknown')[:50]
             outcome = trade.get('outcome', 'N/A')
@@ -235,7 +239,8 @@ class DigestReport:
 
         # Top wallets
         top_wallets_text = ""
-        for wallet in self.top_wallets[:5]:
+        top_wallets = self.top_wallets or []
+        for wallet in top_wallets[:5]:
             addr = wallet.get('address', '')[:12]
             vol = wallet.get('volume', 0)
             win_rate = wallet.get('win_rate')
@@ -597,7 +602,8 @@ class DigestScheduler:
         categories = ["Politics", "Crypto", "Sports", "Finance", "Entertainment", "World", "Other"]
         grouped = {cat: [] for cat in categories}
 
-        for trade in digest.top_trades:
+        top_trades = digest.top_trades or []
+        for trade in top_trades:
             market_text = trade.get('market') or ''
             category = self._detect_category(market_text)
             grouped[category].append(trade)
