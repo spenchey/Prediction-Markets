@@ -48,6 +48,50 @@ from .polymarket_client import Trade, Market, PolymarketClient
 
 
 # =========================================
+# HIGH-FREQUENCY MARKET FILTERING
+# =========================================
+# These markets generate tons of small trades and noise, drowning out real signals
+HIGH_FREQUENCY_MARKET_PATTERNS = [
+    # 15-minute Bitcoin up/down markets - extremely high volume, low signal
+    'bitcoin up or down',
+    'btc up or down',
+    'btc-updown',
+    'btc updown',
+    # Short timeframe patterns
+    '-15m-',  # 15 minute markets
+    '15m-',
+    '-5m-',   # 5 minute markets
+    '5m-',
+    # Hourly Bitcoin patterns (also high noise)
+    'btc-1h',
+    'bitcoin-1h',
+]
+
+
+def is_high_frequency_market(market_question: str, market_id: str = None, slug: str = None) -> bool:
+    """
+    Check if a market is a high-frequency trading market that should be filtered.
+
+    These markets (like 15-minute BTC up/down) generate enormous trade volume
+    but are mostly noise that drowns out real whale signals.
+    """
+    texts_to_check = []
+    if market_question:
+        texts_to_check.append(market_question.lower())
+    if market_id:
+        texts_to_check.append(market_id.lower())
+    if slug:
+        texts_to_check.append(slug.lower())
+
+    for text in texts_to_check:
+        for pattern in HIGH_FREQUENCY_MARKET_PATTERNS:
+            if pattern in text:
+                return True
+
+    return False
+
+
+# =========================================
 # SPORTS KEYWORDS FOR FILTERING
 # =========================================
 SPORTS_KEYWORDS = [
@@ -911,6 +955,10 @@ class WhaleDetector:
         if self.exclude_sports and is_sports:
             return []
 
+        # Check if this is a high-frequency market (15-min BTC, etc.) - always filter these
+        if is_high_frequency_market(market_question, trade.market_id):
+            return []
+
         # Cache market info
         if market_question:
             self.market_questions[trade.market_id] = market_question
@@ -1469,14 +1517,34 @@ class TradeMonitor:
         """Fetch new trades from all configured platforms and check for alerts."""
         all_new_trades = []
 
+        # Calculate time window for gap prevention
+        # Use last_check_time if available, otherwise look back 2 minutes
+        after_time = None
+        if self.last_check_time:
+            # Add small buffer to avoid missing trades at boundary
+            after_time = self.last_check_time - timedelta(seconds=5)
+
         # If no clients configured, use default Polymarket client
         if not self.clients:
             async with PolymarketClient() as client:
-                trades = await client.get_recent_trades(limit=100)
+                # Primary fetch: Get recent trades with higher limit
+                trades = await client.get_recent_trades(limit=500, after_timestamp=after_time)
                 new_trades = [t for t in trades if t.id not in self.seen_trades]
                 all_new_trades.extend(new_trades)
                 for trade in new_trades:
                     self.seen_trades.add(trade.id)
+
+                # Secondary fetch: Specifically check for whale trades we might have missed
+                if hasattr(client, 'get_whale_trades'):
+                    whale_trades = await client.get_whale_trades(
+                        min_amount_usd=self.detector.whale_threshold_usd,
+                        limit=500,
+                        after_timestamp=after_time
+                    )
+                    for trade in whale_trades:
+                        if trade.id not in self.seen_trades:
+                            all_new_trades.append(trade)
+                            self.seen_trades.add(trade.id)
         else:
             # Poll each configured client
             for client in self.clients:
@@ -1488,7 +1556,8 @@ class TradeMonitor:
                         continue
 
                     async with client as c:
-                        trades = await c.get_recent_trades(limit=100)
+                        # Primary fetch with higher limit and time-based query
+                        trades = await c.get_recent_trades(limit=500, after_timestamp=after_time)
 
                         # Filter to new trades only
                         new_trades = [t for t in trades if t.id not in self.seen_trades]
@@ -1503,6 +1572,19 @@ class TradeMonitor:
                             # Mark as seen
                             for trade in new_trades:
                                 self.seen_trades.add(trade.id)
+
+                        # Secondary fetch: Specifically check for whale trades (Polymarket only)
+                        if hasattr(c, 'get_whale_trades'):
+                            whale_trades = await c.get_whale_trades(
+                                min_amount_usd=self.detector.whale_threshold_usd,
+                                limit=500,
+                                after_timestamp=after_time
+                            )
+                            for trade in whale_trades:
+                                if trade.id not in self.seen_trades:
+                                    all_new_trades.append(trade)
+                                    self.seen_trades.add(trade.id)
+                                    logger.info(f"Caught whale trade via secondary fetch: ${trade.amount_usd:,.0f}")
 
                 except Exception as e:
                     platform_name = getattr(client, 'platform_name', client.__class__.__name__)

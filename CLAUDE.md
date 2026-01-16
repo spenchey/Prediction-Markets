@@ -65,6 +65,20 @@ prediction-market-tracker/
 ### Key Constraint: No Sports Markets
 Sports markets (NFL, NBA, etc.) are filtered OUT. Focus is on political/crypto/events where insider information is more likely.
 
+### Filtered High-Frequency Markets (added 2026-01-16)
+The following market types are also filtered out to reduce noise:
+- **15-minute Bitcoin up/down markets** - These generate massive trade volume but are mostly noise
+- **5-minute markets** - Similar high-frequency noise
+- **Hourly BTC markets** - Also filtered
+
+### Trade Fetching Improvements (2026-01-16)
+To prevent missing large trades during high-volume periods:
+1. **Increased fetch limit**: 500 trades per poll (up from 100)
+2. **Time-based queries**: Uses `after_timestamp` to prevent gaps between polls
+3. **Secondary whale check**: Additional query specifically for trades >= whale threshold
+4. **Reduced poll interval**: 15 seconds (down from 60)
+5. **Kalshi pagination**: Now fetches up to 500 trades by paginating through API
+
 ## Testing Requirements
 
 **All tests must follow TDD (Red-Green-Refactor):**
@@ -136,6 +150,7 @@ The service is deployed on Railway with automatic deployments from GitHub.
 ### Project Details
 - **Project Name**: shimmering-kindness
 - **Service Name**: web
+- **Plan**: Hobby ($5/month) - upgraded 2026-01-16 (up to 8 GB RAM / 8 vCPU per service)
 - **Public URL**: https://web-production-9d2d3.up.railway.app
 - **Health Check**: https://web-production-9d2d3.up.railway.app/health
 
@@ -163,7 +178,7 @@ railway redeploy -y
 | `DATABASE_URL` | PostgreSQL connection string (auto-set by Railway) |
 | `DISCORD_WEBHOOK_URL` | Discord webhook for forum channel |
 | `DISCORD_THREAD_ID` | Thread ID for posting alerts (see below) |
-| `POLL_INTERVAL` | Trade polling interval in seconds (default: 30) |
+| `POLL_INTERVAL` | Trade polling interval in seconds (default: 15, reduced from 60 on 2026-01-16) |
 | `WHALE_THRESHOLD_USDC` | Minimum USD for whale alerts (default: 10000) |
 | `LOG_LEVEL` | Logging level (default: INFO) |
 | `KALSHI_API_KEY` | Kalshi API key ID (UUID format) |

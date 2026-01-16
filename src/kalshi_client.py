@@ -342,49 +342,75 @@ class KalshiClient:
     async def get_recent_trades(
         self,
         market_id: Optional[str] = None,
-        limit: int = 100
+        limit: int = 500,
+        after_timestamp: Optional[datetime] = None
     ) -> List[Trade]:
         """
         Fetch recent trades from Kalshi using the global trades endpoint.
 
         Requires authentication. Without auth, returns empty list.
+        Note: Kalshi API limits to 100 per request, so we paginate if needed.
 
         Args:
             market_id: Optional market ticker to filter by
-            limit: Maximum trades to fetch
+            limit: Maximum trades to fetch (will paginate if > 100)
+            after_timestamp: Only get trades after this time (for gap prevention)
         """
         if not self.is_authenticated:
             logger.debug("Kalshi trade fetching requires authentication")
             return []
 
         try:
-            # Use the global /markets/trades endpoint
-            params = {"limit": min(limit, 100)}
-            if market_id:
-                params["ticker"] = market_id
+            all_trades = []
+            cursor = None
+            remaining = limit
 
-            response = await self._request("GET", "/markets/trades", params=params)
-            response.raise_for_status()
-            data = response.json()
+            # Kalshi API only returns 100 at a time, so paginate
+            while remaining > 0:
+                params = {"limit": min(remaining, 100)}
+                if market_id:
+                    params["ticker"] = market_id
+                if cursor:
+                    params["cursor"] = cursor
 
-            trades = []
-            for item in data.get("trades", []):
-                try:
-                    # Get ticker from trade data
-                    ticker = item.get("ticker", market_id or "UNKNOWN")
-                    trade = self._convert_trade(item, ticker)
-                    trades.append(trade)
-                except Exception as e:
-                    logger.warning(f"Failed to parse Kalshi trade: {e}")
-                    continue
+                response = await self._request("GET", "/markets/trades", params=params)
+                response.raise_for_status()
+                data = response.json()
+
+                batch_trades = []
+                for item in data.get("trades", []):
+                    try:
+                        ticker = item.get("ticker", market_id or "UNKNOWN")
+                        trade = self._convert_trade(item, ticker)
+
+                        # Filter by timestamp if specified
+                        if after_timestamp and trade.timestamp < after_timestamp:
+                            continue
+
+                        batch_trades.append(trade)
+                    except Exception as e:
+                        logger.warning(f"Failed to parse Kalshi trade: {e}")
+                        continue
+
+                all_trades.extend(batch_trades)
+                remaining -= len(data.get("trades", []))
+
+                # Check for pagination cursor
+                cursor = data.get("cursor")
+                if not cursor or not data.get("trades"):
+                    break
+
+                # Stop if we've gone past the time window
+                if after_timestamp and batch_trades and batch_trades[-1].timestamp < after_timestamp:
+                    break
 
             # Sort by timestamp descending
-            trades.sort(key=lambda t: t.timestamp, reverse=True)
+            all_trades.sort(key=lambda t: t.timestamp, reverse=True)
 
-            if trades:
-                logger.info(f"Fetched {len(trades)} Kalshi trades")
+            if all_trades:
+                logger.info(f"Fetched {len(all_trades)} Kalshi trades")
 
-            return trades
+            return all_trades
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:

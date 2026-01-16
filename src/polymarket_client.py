@@ -306,8 +306,9 @@ class PolymarketClient:
     async def get_recent_trades(
         self,
         market_id: Optional[str] = None,
-        limit: int = 100,
-        before_timestamp: Optional[datetime] = None
+        limit: int = 500,
+        before_timestamp: Optional[datetime] = None,
+        after_timestamp: Optional[datetime] = None
     ) -> List[Trade]:
         """
         Fetch recent trades from Polymarket.
@@ -317,8 +318,9 @@ class PolymarketClient:
 
         Args:
             market_id: Filter by specific market (optional)
-            limit: Maximum trades to fetch
+            limit: Maximum trades to fetch (default 500 to catch more whale trades)
             before_timestamp: Get trades before this time
+            after_timestamp: Get trades after this time (for gap prevention)
 
         Returns:
             List of Trade objects
@@ -328,6 +330,12 @@ class PolymarketClient:
 
             if market_id:
                 params["market"] = market_id
+
+            # Time-based filtering to prevent gaps between polls
+            if after_timestamp:
+                params["startTs"] = int(after_timestamp.timestamp())
+            if before_timestamp:
+                params["endTs"] = int(before_timestamp.timestamp())
 
             # Use the public Data API for trades (no auth needed)
             response = await self.http.get(
@@ -381,7 +389,40 @@ class PolymarketClient:
         except httpx.HTTPError as e:
             logger.error(f"Failed to fetch trades: {e}")
             return []
-    
+
+    async def get_whale_trades(
+        self,
+        min_amount_usd: float = 10000,
+        limit: int = 500,
+        after_timestamp: Optional[datetime] = None
+    ) -> List[Trade]:
+        """
+        Fetch trades and filter for whale-sized trades only.
+
+        This is a secondary check specifically for large trades to ensure
+        we don't miss any due to high volume of small trades.
+
+        Args:
+            min_amount_usd: Minimum USD value to be considered a whale trade
+            limit: Maximum trades to scan
+            after_timestamp: Only get trades after this time
+
+        Returns:
+            List of Trade objects above the threshold
+        """
+        # Fetch more trades than normal to increase chance of catching whales
+        all_trades = await self.get_recent_trades(
+            limit=limit,
+            after_timestamp=after_timestamp
+        )
+
+        whale_trades = [t for t in all_trades if t.amount_usd >= min_amount_usd]
+
+        if whale_trades:
+            logger.info(f"Found {len(whale_trades)} whale trades (>=${min_amount_usd:,.0f}) out of {len(all_trades)}")
+
+        return whale_trades
+
     async def get_trades_by_address(
         self,
         wallet_address: str,

@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     POLYMARKET_API_BASE: str = "https://clob.polymarket.com"
     POLYMARKET_GAMMA_API: str = "https://gamma-api.polymarket.com"
     POLYMARKET_DATA_API: str = "https://data-api.polymarket.com"  # For trade data
-    POLL_INTERVAL: int = 60  # Check every minute
+    POLL_INTERVAL: int = 15  # Check every 15 seconds (reduced from 60 to catch more trades)
 
     # ============================================
     # KALSHI API SETTINGS
