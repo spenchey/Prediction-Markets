@@ -1332,3 +1332,89 @@ Digest routing queries the database where `category` was previously not stored.
 - `078de78` - Add category column to AlertRecord for persistent digest routing
 - `8d7b318` - Add database migration for category column
 - `17abe9c` - Documentation update
+
+---
+
+## Session Log (2026-01-16) - Claude Skills API Integration
+
+### Feature: AI-Powered Whale Trade Analysis
+
+**Request**: Integrate Claude Skills API to provide AI-powered analysis of whale trades.
+
+### Implementation
+
+Connected two repositories:
+1. **ClaudeSkills repo** (https://github.com/spenchey/ClaudeSkills) - Custom skill for prediction markets analysis
+2. **Prediction-Markets repo** - API integration for AI-powered analysis
+
+#### Files Added
+
+| File | Description |
+|------|-------------|
+| `src/services/__init__.py` | Services module init |
+| `src/services/claude_skills_service.py` | Claude API integration service |
+| `src/routers/__init__.py` | Routers module init |
+| `src/routers/ai_analysis.py` | FastAPI endpoints for AI analysis |
+
+#### New API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/ai/health` | GET | Check if AI service is available |
+| `/api/v1/ai/analyze` | POST | Analyze single whale trade with AI |
+| `/api/v1/ai/analyze/batch` | POST | Pattern detection across multiple trades |
+| `/api/v1/ai/alert/generate` | POST | Generate AI-powered alert messages |
+
+#### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `ANTHROPIC_API_KEY` | Claude API key (optional - service degrades gracefully if not set) |
+
+#### Custom Skill: `prediction-markets-analyst`
+
+Located in ClaudeSkills repo at `prediction-markets-analyst/SKILL.md`
+
+The skill teaches Claude to:
+- Analyze whale trades with smart money signals (Bullish/Bearish/Neutral)
+- Provide confidence levels (High/Medium/Low)
+- Generate actionable market insights
+- Format alerts for different channels (Telegram, Discord, Slack, Email)
+
+#### Usage Example
+
+```python
+from src.services.claude_skills_service import ClaudeSkillsService, WhaleTradeData
+
+service = ClaudeSkillsService()
+trade = WhaleTradeData(
+    market_question="Will Bitcoin reach $100k?",
+    position="YES",
+    amount_usd=50000,
+    entry_price=0.45,
+    price_before=0.42,
+    price_after=0.45,
+    wallet_address="0x1234...",
+    timestamp="2026-01-16T12:00:00Z"
+)
+analysis = service.analyze_whale_trade(trade)
+print(f"Signal: {analysis.smart_money_signal}")  # "Bullish"
+```
+
+#### To Enable
+
+```bash
+railway variables --set ANTHROPIC_API_KEY=your-api-key
+railway redeploy -y
+```
+
+The service gracefully degrades if the API key isn't set - existing functionality continues to work.
+
+#### Related Repositories
+
+- ClaudeSkills: https://github.com/spenchey/ClaudeSkills
+- Anthropic Skills: https://github.com/anthropics/skills
+
+### Commits
+
+- `52b0fc4` - Add Claude Skills API integration for AI-powered whale analysis
