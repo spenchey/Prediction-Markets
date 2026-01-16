@@ -560,6 +560,49 @@ class WhaleDetector:
             return True
         return trader_address.startswith(self.anonymous_trader_prefixes)
 
+    def _detect_category_from_text(self, text: str) -> str:
+        """
+        Detect market category from question/title text using keyword matching.
+
+        Returns one of: Politics, Crypto, Sports, Finance, Entertainment, Science, World, Other
+        """
+        if not text:
+            return "Other"
+
+        text_lower = text.lower()
+
+        # Category keywords (order matters - more specific first)
+        category_keywords = {
+            "Politics": ["trump", "biden", "election", "president", "congress", "senate",
+                        "vote", "democrat", "republican", "governor", "mayor", "party",
+                        "nominee", "gop", "dnc", "rnc", "political", "pelosi", "mccarthy",
+                        "desantis", "newsom", "whitmer", "vance", "harris"],
+            "Crypto": ["bitcoin", "btc", "ethereum", "eth", "crypto", "token", "blockchain",
+                      "solana", "sol", "dogecoin", "doge", "ripple", "xrp", "cardano"],
+            "Sports": ["nfl", "nba", "mlb", "nhl", "super bowl", "championship", "playoff",
+                      "world series", "stanley cup", "premier league", "uefa", "fifa",
+                      " vs ", " vs. ", " @ ", "lakers", "celtics", "warriors", "chiefs",
+                      "eagles", "cowboys", "yankees", "dodgers", "game", "match"],
+            "Finance": ["stock", "s&p", "nasdaq", "fed", "interest rate", "inflation",
+                       "gdp", "recession", "market", "dow", "treasury", "unemployment",
+                       "fomc", "cpi", "jobs report", "earnings"],
+            "Entertainment": ["oscar", "grammy", "emmy", "movie", "album", "celebrity",
+                            "twitter", "tweet", "streaming", "netflix", "spotify",
+                            "box office", "billboard", "taylor swift", "beyonce"],
+            "Science": ["ai ", "openai", "climate", "fda", "vaccine", "space", "nasa",
+                       "weather", "hurricane", "earthquake", "temperature", "gpt",
+                       "artificial intelligence", "spacex", "launch"],
+            "World": ["war", "ukraine", "russia", "china", "iran", "israel", "military",
+                     "invasion", "ceasefire", "nato", "sanctions", "tariff", "trade war",
+                     "north korea", "taiwan", "gaza", "hamas", "putin", "zelensky"],
+        }
+
+        for category, keywords in category_keywords.items():
+            if any(kw in text_lower for kw in keywords):
+                return category
+
+        return "Other"
+
     def _update_wallet_profile(self, trade: Trade, market_question: str = None) -> WalletProfile:
         """
         Update or create a wallet profile based on a trade.
@@ -962,6 +1005,11 @@ class WhaleDetector:
         # Cache market info
         if market_question:
             self.market_questions[trade.market_id] = market_question
+            # Auto-detect category from question text if not already cached
+            if trade.market_id not in self.market_categories:
+                detected_category = self._detect_category_from_text(market_question)
+                self.market_categories[trade.market_id] = detected_category
+                logger.debug(f"Auto-detected category '{detected_category}' for market {trade.market_id[:20]}...")
 
         # Get market URL and category from cache or default
         market_url = self.market_urls.get(trade.market_id)
