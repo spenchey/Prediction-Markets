@@ -1233,15 +1233,38 @@ DISCORD_THREAD_VIP=1461798236506554551
 
 ---
 
-## Session Log (2026-01-16) - Digest Category Routing Fix
+## Session Log (2026-01-16) - Discord Digest & Category Routing Fix
+
+### Feature: Discord Category-Specific Digests
+
+Added daily/weekly digest summaries sent to Discord category threads (in addition to email).
+
+**Implementation**:
+- `DigestReport.to_discord_embed()` - Generates Discord embed payload
+- `DiscordAlert.send_digest()` - Sends digest to Discord
+- `DigestScheduler._send_discord_digest()` - Routes digests to category threads
+- `DigestScheduler._group_alerts_by_category()` - Groups trades by detected category
+- `DigestScheduler._build_category_digest()` - Builds category-specific embed
+- `DigestScheduler._send_category_digest()` - Sends to specific thread
+
+**Config**: `DISCORD_THREAD_DIGEST` - Optional dedicated digest thread
+
+---
 
 ### Issue: Category-Specific Digests Only Going to "Other" Thread
 
-**Problem**: Daily/weekly digest emails only sent summaries to the "Other" thread, not to category-specific threads (Politics, Crypto, Finance, etc.).
+**Initial Report**: User reported alerts only going to Finance/Crypto threads, not Sports/World/Entertainment/Politics.
 
-**Root Causes Identified**:
-1. Database `AlertRecord` didn't have a `category` column - alerts were saved without category info
-2. `market_question` field in database was often `null`, so text-based category detection failed
+**Investigation Findings**:
+1. **Real-time alerts work correctly** - `WhaleAlert.category` is set by whale_detector and routes properly
+2. **Digest routing was broken** - Database pulls for digest had no category info
+3. **Root cause**: Two different routing systems exist:
+   - **Real-time**: Uses `WhaleAlert.category` (in-memory) → works
+   - **Digest**: Queries `AlertRecord` from database → broken (no category column)
+
+**Root Causes**:
+1. Database `AlertRecord` didn't have a `category` column - alerts saved without category
+2. `market_question` field in database often `null` (WebSocket trades don't always include title)
 3. SQLAlchemy's `create_all()` doesn't add new columns to existing tables
 
 ### Solution (Multi-Part Fix)
@@ -1262,7 +1285,7 @@ Added `category` column to `AlertRecord` model in `database.py`:
 - New alerts now store their detected category permanently
 - Category is read from `WhaleAlert.category` field when saving
 
-#### Part 3: Database Migration
+#### Part 3: Database Migration System
 Added `_run_migrations()` method to `Database` class:
 ```python
 async def _run_migrations(self):
@@ -1270,25 +1293,42 @@ async def _run_migrations(self):
     # SQLite: PRAGMA table_info check then ALTER
 ```
 
-This runs on startup to add columns that SQLAlchemy's `create_all()` won't add to existing tables.
+This runs on startup to add columns that SQLAlchemy's `create_all()` won't add to existing tables. **Important pattern for future schema changes.**
+
+### Key Technical Insight: Two Routing Systems
+
+| System | Source | Category Field | Status |
+|--------|--------|---------------|--------|
+| **Real-time alerts** | `WhaleAlert` (in-memory) | `WhaleAlert.category` | ✅ Works |
+| **Digest compilation** | `AlertRecord` (database) | `AlertRecord.category` | ✅ Fixed |
+
+Real-time routing uses the in-memory `WhaleAlert.category` field which is always populated by `whale_detector._detect_category_from_text()`.
+
+Digest routing queries the database where `category` was previously not stored.
 
 ### Files Changed
 - `src/database.py`:
-  - Added `category` column to `AlertRecord` model
+  - Added `category` column to `AlertRecord` model (line 96)
   - Added `_run_migrations()` method for schema changes
   - Updated `save_alert()` to store category
-  - Updated `get_digest_summary()` to return category
+  - Updated `get_digest_summary()` to return `market_id` and `category`
 - `src/scheduler.py`:
-  - Updated `_detect_category()` to accept `market_id` parameter
-  - Added Kalshi ticker pattern matching
-  - Updated `_group_alerts_by_category()` to prefer stored category
+  - Added `to_discord_embed()` to `DigestReport`
+  - Added `_send_discord_digest()`, `_group_alerts_by_category()`, `_build_category_digest()`, `_send_category_digest()` methods
+  - Updated `_detect_category()` to accept `market_id` parameter and check Kalshi ticker patterns
 
-### Category Detection Priority
-1. **Stored category** (from database) - if available
+### Category Detection Priority (Digest)
+1. **Stored category** (from `AlertRecord.category`) - if available
 2. **Text keywords** (from `market_question`) - if text available
-3. **Market ID patterns** (from Kalshi tickers) - fallback
+3. **Market ID patterns** (from Kalshi tickers like KXBTC) - fallback for null market_question
+
+### Debugging Tips
+- Check `/digest/preview` to see top_trades with their `market`, `market_id`, and `category` fields
+- If `category` is null and `market` is null, only `market_id` pattern matching works
+- New alerts will have category stored; old alerts rely on fallback detection
 
 ### Commits
 - `66f2aa4` - Fix digest category detection to use market_id for Kalshi tickers
 - `078de78` - Add category column to AlertRecord for persistent digest routing
 - `8d7b318` - Add database migration for category column
+- `17abe9c` - Documentation update
