@@ -421,6 +421,7 @@ class Database:
                 {
                     "amount": a.trade_amount_usd,
                     "market": a.market_question,
+                    "market_id": a.market_id,  # Include for Kalshi ticker-based category detection
                     "outcome": a.outcome,
                     "wallet": a.trader_address,
                     "alert_type": a.alert_type,

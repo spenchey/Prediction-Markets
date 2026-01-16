@@ -609,37 +609,63 @@ class DigestScheduler:
         top_trades = digest.top_trades or []
         for trade in top_trades:
             market_text = trade.get('market') or ''
-            category = self._detect_category(market_text)
+            market_id = trade.get('market_id') or ''
+            category = self._detect_category(market_text, market_id)
+            logger.debug(f"📊 Trade categorized: market='{market_text[:50] if market_text else 'None'}', market_id='{market_id}' -> {category}")
             grouped[category].append(trade)
 
         return grouped
 
-    def _detect_category(self, text: str) -> str:
-        """Detect category from market question text."""
-        if not text:
-            return "Other"
+    def _detect_category(self, text: str, market_id: str = None) -> str:
+        """Detect category from market question text OR market_id (Kalshi ticker)."""
 
-        text_lower = text.lower()
+        # First try keyword matching on text
+        if text:
+            text_lower = text.lower()
 
-        category_keywords = {
-            "Politics": ["trump", "biden", "election", "president", "congress", "senate",
-                        "vote", "democrat", "republican", "governor", "party", "nominee",
-                        "desantis", "harris", "vance", "pelosi"],
-            "Crypto": ["bitcoin", "btc", "ethereum", "eth", "crypto", "token", "blockchain",
-                      "solana", "sol", "dogecoin", "doge", "ripple", "xrp"],
-            "Sports": ["nfl", "nba", "mlb", "nhl", "super bowl", "championship", "playoff",
-                      "world series", " vs ", " vs. ", " @ ", "game", "match"],
-            "Finance": ["stock", "s&p", "nasdaq", "fed", "interest rate", "inflation",
-                       "gdp", "recession", "dow", "treasury", "fomc", "cpi"],
-            "Entertainment": ["oscar", "grammy", "emmy", "movie", "album", "celebrity",
-                            "twitter", "streaming", "netflix", "taylor swift"],
-            "World": ["war", "ukraine", "russia", "china", "iran", "israel", "military",
-                     "invasion", "ceasefire", "nato", "sanctions", "gaza", "putin"],
-        }
+            category_keywords = {
+                "Politics": ["trump", "biden", "election", "president", "congress", "senate",
+                            "vote", "democrat", "republican", "governor", "party", "nominee",
+                            "desantis", "harris", "vance", "pelosi"],
+                "Crypto": ["bitcoin", "btc", "ethereum", "eth", "crypto", "token", "blockchain",
+                          "solana", "sol", "dogecoin", "doge", "ripple", "xrp"],
+                "Sports": ["nfl", "nba", "mlb", "nhl", "super bowl", "championship", "playoff",
+                          "world series", " vs ", " vs. ", " @ ", "game", "match"],
+                "Finance": ["stock", "s&p", "nasdaq", "fed", "interest rate", "inflation",
+                           "gdp", "recession", "dow", "treasury", "fomc", "cpi"],
+                "Entertainment": ["oscar", "grammy", "emmy", "movie", "album", "celebrity",
+                                "twitter", "streaming", "netflix", "taylor swift"],
+                "World": ["war", "ukraine", "russia", "china", "iran", "israel", "military",
+                         "invasion", "ceasefire", "nato", "sanctions", "gaza", "putin"],
+            }
 
-        for category, keywords in category_keywords.items():
-            if any(kw in text_lower for kw in keywords):
-                return category
+            for category, keywords in category_keywords.items():
+                if any(kw in text_lower for kw in keywords):
+                    return category
+
+        # If no text match, try Kalshi ticker patterns
+        if market_id:
+            market_id_upper = market_id.upper()
+
+            # Sports tickers
+            if any(pattern in market_id_upper for pattern in ["KXNBA", "KXNFL", "KXMLB", "KXNHL", "KXMVE", "KXATP", "KXLIGUE", "KXMLS"]):
+                return "Sports"
+
+            # Crypto tickers
+            if any(pattern in market_id_upper for pattern in ["KXBTC", "KXETH", "KXSOL", "KXDOGE", "KXXRP"]):
+                return "Crypto"
+
+            # Finance tickers
+            if any(pattern in market_id_upper for pattern in ["KXEO", "KXCPI", "KXGDP", "KXFED", "KXFOMC", "KXINFL", "KXRATE"]):
+                return "Finance"
+
+            # Politics tickers
+            if any(pattern in market_id_upper for pattern in ["KXTRUMP", "KXDJTVO", "KXPRES", "KXSENA", "KXGOV", "KXELEC"]):
+                return "Politics"
+
+            # World tickers
+            if any(pattern in market_id_upper for pattern in ["KXUKR", "KXRUS", "KXWAR", "KXISRA", "KXGAZA"]):
+                return "World"
 
         return "Other"
 
