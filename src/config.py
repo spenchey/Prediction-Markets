@@ -36,7 +36,12 @@ class Settings(BaseSettings):
     POLYMARKET_API_BASE: str = "https://clob.polymarket.com"
     POLYMARKET_GAMMA_API: str = "https://gamma-api.polymarket.com"
     POLYMARKET_DATA_API: str = "https://data-api.polymarket.com"  # For trade data
-    POLL_INTERVAL: int = 15  # Check every 15 seconds (reduced from 60 to catch more trades)
+    POLYMARKET_WS_URL: str = "wss://ws-live-data.polymarket.com"  # WebSocket for real-time trades
+
+    # Hybrid monitoring: WebSocket (real-time) + Polling (backup)
+    USE_HYBRID_MONITOR: bool = True  # Enable WebSocket + polling hybrid
+    POLL_INTERVAL: int = 30  # Backup polling interval (30s when using hybrid, 15s otherwise)
+    WS_RECONNECT_DELAY: float = 5.0  # Seconds to wait before WebSocket reconnect
 
     # ============================================
     # KALSHI API SETTINGS

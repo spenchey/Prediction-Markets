@@ -76,8 +76,34 @@ To prevent missing large trades during high-volume periods:
 1. **Increased fetch limit**: 500 trades per poll (up from 100)
 2. **Time-based queries**: Uses `after_timestamp` to prevent gaps between polls
 3. **Secondary whale check**: Additional query specifically for trades >= whale threshold
-4. **Reduced poll interval**: 15 seconds (down from 60)
-5. **Kalshi pagination**: Now fetches up to 500 trades by paginating through API
+4. **Kalshi pagination**: Now fetches up to 500 trades by paginating through API
+
+### Hybrid WebSocket + Polling Monitor (2026-01-16)
+Real-time trade detection using WebSocket with polling as backup:
+
+**Architecture:**
+- **WebSocket (primary)**: Connects to `wss://ws-live-data.polymarket.com` for real-time Polymarket trades (~100ms latency)
+- **Polling (backup)**: Runs every 30 seconds to catch any missed trades and handle Kalshi
+
+**Files:**
+- `src/polymarket_websocket.py` - WebSocket client and HybridTradeMonitor class
+- `src/config.py` - `USE_HYBRID_MONITOR=True` enables hybrid mode
+
+**Configuration:**
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `USE_HYBRID_MONITOR` | `True` | Enable WebSocket + polling hybrid |
+| `POLL_INTERVAL` | `30` | Backup polling interval (seconds) |
+| `POLYMARKET_WS_URL` | `wss://ws-live-data.polymarket.com` | WebSocket endpoint |
+
+**Health endpoint** now shows WebSocket stats:
+```json
+{
+  "monitor": "hybrid",
+  "websocket": {"connected": true, "trades_received": 1234},
+  "polling": {"trades_received": 56}
+}
+```
 
 ## Testing Requirements
 

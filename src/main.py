@@ -30,6 +30,7 @@ from .database import Database, get_db, TradeRecord, AlertRecord
 from .polymarket_client import PolymarketClient, Market
 from .kalshi_client import KalshiClient
 from .whale_detector import WhaleDetector, WhaleAlert, TradeMonitor
+from .polymarket_websocket import HybridTradeMonitor
 from .alerter import Alerter, create_default_alerter
 from .scheduler import DigestScheduler, create_digest_scheduler
 
@@ -51,7 +52,8 @@ logger.add(
 # These are initialized on startup
 db: Optional[Database] = None
 detector: Optional[WhaleDetector] = None
-monitor: Optional[TradeMonitor] = None
+monitor: Optional[TradeMonitor] = None  # Legacy polling monitor (fallback)
+hybrid_monitor: Optional[HybridTradeMonitor] = None  # WebSocket + polling hybrid
 monitor_task: Optional[asyncio.Task] = None
 alerter: Optional[Alerter] = None
 digest_scheduler: Optional[DigestScheduler] = None
@@ -154,7 +156,7 @@ async def lifespan(app: FastAPI):
     - On startup: Initialize database, alerter, start monitoring
     - On shutdown: Clean up resources
     """
-    global db, detector, monitor, monitor_task, alerter, digest_scheduler
+    global db, detector, monitor, hybrid_monitor, monitor_task, alerter, digest_scheduler
 
     logger.info("🚀 Starting Prediction Market Tracker...")
     logger.info(f"📊 DATABASE_URL configured: {'Yes' if settings.DATABASE_URL else 'No'}")
@@ -207,20 +209,33 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("ℹ️ Kalshi client disabled (KALSHI_ENABLED=false)")
 
-    # Initialize trade monitor
+    # Initialize trade monitor (hybrid WebSocket + polling, or legacy polling)
     try:
         if detector:
-            monitor = TradeMonitor(
-                detector=detector,
-                poll_interval=settings.POLL_INTERVAL,
-                on_alert=on_alert_detected,
-                clients=platform_clients
-            )
-
-            # Start monitoring in background
-            monitor_task = asyncio.create_task(monitor.start())
-            logger.info(f"✅ Trade monitor started (polling every {settings.POLL_INTERVAL}s)")
-            logger.info(f"   Platforms: {', '.join(platform_names)}")
+            if settings.USE_HYBRID_MONITOR:
+                # Use hybrid monitor: WebSocket for real-time + polling as backup
+                hybrid_monitor = HybridTradeMonitor(
+                    detector=detector,
+                    on_alert=on_alert_detected,
+                    poll_interval=settings.POLL_INTERVAL,  # Backup polling (30s)
+                    clients=platform_clients
+                )
+                monitor_task = asyncio.create_task(hybrid_monitor.start())
+                logger.info("✅ Hybrid trade monitor started")
+                logger.info("   WebSocket: Real-time Polymarket trades (~100ms latency)")
+                logger.info(f"   Polling backup: Every {settings.POLL_INTERVAL}s for all platforms")
+                logger.info(f"   Platforms: {', '.join(platform_names)}")
+            else:
+                # Legacy polling-only monitor
+                monitor = TradeMonitor(
+                    detector=detector,
+                    poll_interval=settings.POLL_INTERVAL,
+                    on_alert=on_alert_detected,
+                    clients=platform_clients
+                )
+                monitor_task = asyncio.create_task(monitor.start())
+                logger.info(f"✅ Trade monitor started (polling every {settings.POLL_INTERVAL}s)")
+                logger.info(f"   Platforms: {', '.join(platform_names)}")
         else:
             logger.warning("⚠️ Trade monitor not started - detector not available")
     except Exception as e:
@@ -245,17 +260,20 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("🛑 Shutting down...")
-    
+
+    if hybrid_monitor:
+        await hybrid_monitor.stop()
+
     if monitor:
         await monitor.stop()
-    
+
     if monitor_task:
         monitor_task.cancel()
         try:
             await monitor_task
         except asyncio.CancelledError:
             pass
-    
+
     if digest_scheduler:
         digest_scheduler.stop()
 
@@ -349,8 +367,22 @@ async def health_check():
         health["database"] = f"error: {str(e)[:50]}"
 
     # Check monitor status
-    if monitor and monitor_task:
+    if hybrid_monitor:
+        health["monitor"] = "hybrid"
+        health["monitor_mode"] = "WebSocket + Polling backup"
+        ws_stats = hybrid_monitor.get_stats()
+        health["websocket"] = {
+            "connected": ws_stats.get("websocket", {}).get("connected", False),
+            "trades_received": ws_stats.get("ws_trades_processed", 0),
+            "alerts_generated": ws_stats.get("ws_alerts_generated", 0)
+        }
+        health["polling"] = {
+            "trades_received": ws_stats.get("poll_trades_processed", 0),
+            "alerts_generated": ws_stats.get("poll_alerts_generated", 0)
+        }
+    elif monitor and monitor_task:
         health["monitor"] = "running" if not monitor_task.done() else "stopped"
+        health["monitor_mode"] = "Polling only"
     else:
         health["monitor"] = "not_started"
 
