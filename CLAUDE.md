@@ -1230,3 +1230,65 @@ DISCORD_THREAD_VIP=1461798236506554551
 
 ### Commits
 - `096f1c4` - Add VIP wallet alert system
+
+---
+
+## Session Log (2026-01-16) - Digest Category Routing Fix
+
+### Issue: Category-Specific Digests Only Going to "Other" Thread
+
+**Problem**: Daily/weekly digest emails only sent summaries to the "Other" thread, not to category-specific threads (Politics, Crypto, Finance, etc.).
+
+**Root Causes Identified**:
+1. Database `AlertRecord` didn't have a `category` column - alerts were saved without category info
+2. `market_question` field in database was often `null`, so text-based category detection failed
+3. SQLAlchemy's `create_all()` doesn't add new columns to existing tables
+
+### Solution (Multi-Part Fix)
+
+#### Part 1: Market ID-Based Category Detection
+Updated `_detect_category()` in `scheduler.py` to detect categories from Kalshi ticker patterns when `market_question` is null:
+
+| Ticker Pattern | Category |
+|---------------|----------|
+| KXNBA, KXNFL, KXMLB, KXNHL, KXMVE, KXATP, KXLIGUE, KXMLS | Sports |
+| KXBTC, KXETH, KXSOL, KXDOGE, KXXRP | Crypto |
+| KXEO, KXCPI, KXGDP, KXFED, KXFOMC, KXINFL, KXRATE | Finance |
+| KXTRUMP, KXDJTVO, KXPRES, KXSENA, KXGOV, KXELEC | Politics |
+| KXUKR, KXRUS, KXWAR, KXISRA, KXGAZA | World |
+
+#### Part 2: Store Category in Database
+Added `category` column to `AlertRecord` model in `database.py`:
+- New alerts now store their detected category permanently
+- Category is read from `WhaleAlert.category` field when saving
+
+#### Part 3: Database Migration
+Added `_run_migrations()` method to `Database` class:
+```python
+async def _run_migrations(self):
+    # PostgreSQL: ALTER TABLE alerts ADD COLUMN IF NOT EXISTS category VARCHAR;
+    # SQLite: PRAGMA table_info check then ALTER
+```
+
+This runs on startup to add columns that SQLAlchemy's `create_all()` won't add to existing tables.
+
+### Files Changed
+- `src/database.py`:
+  - Added `category` column to `AlertRecord` model
+  - Added `_run_migrations()` method for schema changes
+  - Updated `save_alert()` to store category
+  - Updated `get_digest_summary()` to return category
+- `src/scheduler.py`:
+  - Updated `_detect_category()` to accept `market_id` parameter
+  - Added Kalshi ticker pattern matching
+  - Updated `_group_alerts_by_category()` to prefer stored category
+
+### Category Detection Priority
+1. **Stored category** (from database) - if available
+2. **Text keywords** (from `market_question`) - if text available
+3. **Market ID patterns** (from Kalshi tickers) - fallback
+
+### Commits
+- `66f2aa4` - Fix digest category detection to use market_id for Kalshi tickers
+- `078de78` - Add category column to AlertRecord for persistent digest routing
+- `8d7b318` - Add database migration for category column
