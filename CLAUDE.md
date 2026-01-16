@@ -105,6 +105,18 @@ Real-time trade detection using WebSocket with polling as backup:
 }
 ```
 
+### Market Question API Fallback (2026-01-16)
+
+**Problem**: WebSocket trades sometimes don't include the market title (`_ws_title`), causing alerts to show "Market 0x1b0ccb1570..." instead of the actual market question.
+
+**Solution**: `_on_ws_trade()` in `polymarket_websocket.py` now:
+1. First checks if `_ws_title` is provided by WebSocket
+2. If not, checks `_market_cache` for previously fetched value
+3. If not in cache, fetches from Polymarket API using `get_market_by_id()`
+4. Caches the result for future trades on the same market
+
+**Code location**: `src/polymarket_websocket.py` lines 489-528
+
 ## Testing Requirements
 
 **All tests must follow TDD (Red-Green-Refactor):**
