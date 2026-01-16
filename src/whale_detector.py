@@ -560,17 +560,13 @@ class WhaleDetector:
             return True
         return trader_address.startswith(self.anonymous_trader_prefixes)
 
-    def _detect_category_from_text(self, text: str) -> str:
+    def _detect_category_from_text(self, text: str, market_id: str = None) -> str:
         """
         Detect market category from question/title text using keyword matching.
+        Also detects from Kalshi ticker patterns when text is not available.
 
         Returns one of: Politics, Crypto, Sports, Finance, Entertainment, Science, World, Other
         """
-        if not text:
-            return "Other"
-
-        text_lower = text.lower()
-
         # Category keywords (order matters - more specific first)
         category_keywords = {
             "Politics": ["trump", "biden", "election", "president", "congress", "senate",
@@ -597,9 +593,41 @@ class WhaleDetector:
                      "north korea", "taiwan", "gaza", "hamas", "putin", "zelensky"],
         }
 
-        for category, keywords in category_keywords.items():
-            if any(kw in text_lower for kw in keywords):
-                return category
+        # Try text-based detection first
+        if text:
+            text_lower = text.lower()
+            for category, keywords in category_keywords.items():
+                if any(kw in text_lower for kw in keywords):
+                    return category
+
+        # Kalshi ticker pattern detection (for trades without market question)
+        if market_id:
+            market_id_upper = market_id.upper()
+            # Sports tickers
+            if any(pattern in market_id_upper for pattern in [
+                "KXNBA", "KXNFL", "KXMLB", "KXNHL", "KXMVE", "KXATP", "KXWTA",
+                "KXLIGUE", "KXEUROLEAGUE", "KXPREMIER", "KXLALIGA", "KXSERIE",
+                "KXBUNDES", "KXCHAMPIONS", "KXUFC", "KXPGA", "KXTENNIS",
+                "SPORTS", "GAME", "MATCH", "TOTAL"
+            ]):
+                return "Sports"
+            # Crypto tickers
+            if any(pattern in market_id_upper for pattern in [
+                "KXBTC", "KXETH", "KXSOL", "KXDOGE", "KXCRYPTO", "BITCOIN", "ETHEREUM"
+            ]):
+                return "Crypto"
+            # Finance/Economics tickers
+            if any(pattern in market_id_upper for pattern in [
+                "KXEO", "KXCPI", "KXGDP", "KXJOBS", "KXFED", "KXFOMC", "KXRATE",
+                "KXINFL", "KXUNEMPLOY", "KXSP500", "KXNASDAQ", "KXDOW"
+            ]):
+                return "Finance"
+            # Politics tickers
+            if any(pattern in market_id_upper for pattern in [
+                "KXTRUMP", "KXBIDEN", "KXPRES", "KXELECT", "KXGOV", "KXSEN",
+                "KXHOUSE", "KXCONGRESS", "KXDJTVO"  # DJTVO = Trump related
+            ]):
+                return "Politics"
 
         return "Other"
 
@@ -1005,11 +1033,13 @@ class WhaleDetector:
         # Cache market info
         if market_question:
             self.market_questions[trade.market_id] = market_question
-            # Auto-detect category from question text if not already cached
-            if trade.market_id not in self.market_categories:
-                detected_category = self._detect_category_from_text(market_question)
-                self.market_categories[trade.market_id] = detected_category
-                logger.debug(f"Auto-detected category '{detected_category}' for market {trade.market_id[:20]}...")
+
+        # Auto-detect and cache category if not already cached
+        if trade.market_id not in self.market_categories:
+            detected_category = self._detect_category_from_text(market_question, trade.market_id)
+            self.market_categories[trade.market_id] = detected_category
+            if detected_category != "Other":
+                logger.debug(f"Auto-detected category '{detected_category}' for market {trade.market_id[:30]}...")
 
         # Get market URL and category from cache or default
         market_url = self.market_urls.get(trade.market_id)
