@@ -223,14 +223,6 @@ class PolymarketWebSocket:
             price = float(item.get("price", 0))
             amount_usd = size * price
 
-            # Debug: Log every 100th trade to see the data
-            if self._trades_received % 100 == 0:
-                logger.info(f"[WS SAMPLE] #{self._trades_received} size={size}, price={price}, amount=${amount_usd:.2f}, keys={list(item.keys())[:8]}")
-
-            # Debug: Log large trades to verify amount calculation
-            if amount_usd >= 100:
-                logger.info(f"[WS LARGE] ${amount_usd:,.2f} (size={size}, price={price}) - {item.get('title', item.get('outcome', 'Unknown'))[:50]}")
-
             # Parse timestamp (can be in seconds or milliseconds)
             ts = item.get("timestamp")
             if isinstance(ts, int):

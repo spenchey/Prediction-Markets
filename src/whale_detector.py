@@ -1090,14 +1090,10 @@ class WhaleDetector:
         # Check if we should skip sports markets (check both question and ticker)
         is_sports = is_sports_market(market_question, trade.market_id)
         if self.exclude_sports and is_sports:
-            if trade.amount_usd >= 1000:
-                logger.debug(f"[FILTERED-SPORTS] ${trade.amount_usd:,.0f} - {market_question or trade.market_id[:30]}")
             return []
 
         # Check if this is a high-frequency market (15-min BTC, etc.) - always filter these
         if is_high_frequency_market(market_question, trade.market_id):
-            if trade.amount_usd >= 1000:
-                logger.debug(f"[FILTERED-HF] ${trade.amount_usd:,.0f} - {market_question or trade.market_id[:30]}")
             return []
 
         # Cache market info
