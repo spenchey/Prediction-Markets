@@ -692,29 +692,34 @@ class TwitterFormatter:
     @classmethod
     def is_twitter_worthy(cls, alert: AlertMessage, min_amount: float = 1000.0) -> bool:
         """
-        Determine if an alert is worthy of posting to Twitter.
+        Determine if an alert is truly exceptional and worthy of the Twitter highlight reel.
 
-        Criteria (must meet at least one):
-        - Trade amount >= min_amount (default $1,000)
-        - HIGH severity
-        - Multi-signal alert (3+ triggers)
-        - Contains HIGH_IMPACT or SMART_MONEY type
+        STRICT criteria - must be genuinely noteworthy:
+        1. $10,000+ trades (true whale territory)
+        2. $1,000+ with multi-trade patterns (REPEAT_ACTOR, HEAVY_ACTOR, CLUSTER_ACTIVITY)
+        3. $5,000+ with SMART_MONEY (proven winners making significant bets)
+        4. $5,000+ with NEW_WALLET (first-time whale - rare and interesting)
+        5. 4+ simultaneous triggers (highly unusual activity)
         """
-        # Check amount threshold
-        if alert.trade_amount >= min_amount:
+        amount = alert.trade_amount
+        types = set(alert.alert_types)
+
+        # Tier 1: True whales ($10k+) always noteworthy
+        if amount >= 10_000:
             return True
 
-        # Check severity
-        if alert.severity == "HIGH":
+        # Tier 2: Multi-trade patterns at $1k+ (coordinated/repeat activity)
+        multi_trade_types = {"REPEAT_ACTOR", "HEAVY_ACTOR", "CLUSTER_ACTIVITY"}
+        if amount >= 1_000 and types & multi_trade_types:
             return True
 
-        # Check for multi-signal (3+ triggers)
-        if len(alert.alert_types) >= 3:
+        # Tier 3: Smart money or new whales at $5k+ (quality signals)
+        quality_types = {"SMART_MONEY", "NEW_WALLET", "VIP_WALLET"}
+        if amount >= 5_000 and types & quality_types:
             return True
 
-        # Check for high-value signal types
-        high_value_types = {"HIGH_IMPACT", "SMART_MONEY", "WHALE_TRADE", "CLUSTER_ACTIVITY"}
-        if any(t in high_value_types for t in alert.alert_types):
+        # Tier 4: Highly unusual activity (4+ triggers at once)
+        if len(types) >= 4:
             return True
 
         return False
@@ -722,13 +727,16 @@ class TwitterFormatter:
 
 class TwitterQueueAlert(AlertChannel):
     """
-    Sends formatted tweets to a private Discord channel for manual posting to X.
+    Sends truly exceptional alerts to a private Discord channel for manual posting to X.
 
     Features:
-    - Filters for high-value alerts only ($1,000+ or HIGH severity)
-    - Formats alerts as tweet-ready text with hashtags
-    - Rate limits to ~4 per hour to avoid spam
+    - STRICT filtering: Only the most noteworthy alerts make it through
+      - $10k+ whale trades
+      - $1k+ multi-trade patterns (repeat/heavy actors, clusters)
+      - $5k+ smart money or new wallet whales
+      - 4+ simultaneous triggers
     - Posts to a private #for-twitter Discord channel
+    - Rate limits to 20/hour as safety net (criteria should naturally limit)
 
     Setup:
     1. Create private Discord text channel called #for-twitter
@@ -739,7 +747,7 @@ class TwitterQueueAlert(AlertChannel):
     def __init__(self, webhook_url: str = None, min_amount: float = None, max_per_hour: int = None):
         self.webhook_url = webhook_url or getattr(settings, 'DISCORD_TWITTER_WEBHOOK_URL', None)
         self.min_amount = min_amount or getattr(settings, 'TWITTER_MIN_AMOUNT', 1000.0)
-        self.max_per_hour = max_per_hour or getattr(settings, 'TWITTER_MAX_PER_HOUR', 4)
+        self.max_per_hour = max_per_hour or getattr(settings, 'TWITTER_MAX_PER_HOUR', 20)
         self._recent_posts: List[datetime] = []
 
     @property
