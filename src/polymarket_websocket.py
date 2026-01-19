@@ -202,7 +202,8 @@ class PolymarketWebSocket:
         """
         try:
             # Handle both direct trade data and wrapped data
-            trade_data = data.get("data", data)
+            # Check for 'payload', 'data', or direct data
+            trade_data = data.get("payload") or data.get("data") or data
 
             # If it's a list of trades, process each
             if isinstance(trade_data, list):
