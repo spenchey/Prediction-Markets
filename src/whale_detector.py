@@ -514,7 +514,7 @@ class WhaleDetector:
         exit_threshold_usd: float = 5_000,      # Min USD for exit alerts
         contrarian_threshold: float = 0.15,     # Bet on outcome with <15% odds
         cluster_time_window_minutes: int = 5,   # Time window for cluster detection
-        min_alert_threshold_usd: float = 1000,  # Minimum USD for alerts (except exempt types)
+        min_alert_threshold_usd: float = 4400,  # Minimum USD for alerts (except multi-trade patterns)
         crypto_min_threshold_usd: float = 974,  # Higher threshold for crypto markets
         # VIP wallet detection settings
         vip_min_volume: float = 100_000,        # $100k lifetime volume to be VIP
