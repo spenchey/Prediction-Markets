@@ -502,6 +502,66 @@ When working on this project:
 
 ---
 
+### January 19, 2026 - Alert Threshold & WebSocket Fix Session
+
+**What was done:**
+
+1. **Raised minimum alert threshold from $450 to $1,000**
+   - User requested fewer alerts
+   - Updated `min_alert_threshold_usd` in `whale_detector.py`
+
+2. **Updated exempt alert types**
+   - Changed from: `CLUSTER_ACTIVITY`, `WHALE_EXIT`, `VIP_WALLET`
+   - Changed to: `CLUSTER_ACTIVITY`, `REPEAT_ACTOR`, `HEAVY_ACTOR`
+   - Reason: User wants cluster trading and multi-trade execution alerts at any amount
+
+3. **Fixed market lookup for category detection**
+   - **Problem**: World/Entertainment alerts all going to "Other" thread since 1/16
+   - **Root cause**: `get_market_by_id()` used Gamma API `/markets/{id}` which expects numeric IDs, but trades have condition IDs (hex strings like `0x702e...`)
+   - **Fix**: Changed to use CLOB API (`clob.polymarket.com/markets/{condition_id}`) which correctly accepts condition IDs
+   - Now market questions are fetched properly → category detection works → alerts route to correct Discord threads
+
+4. **Fixed WebSocket trade parsing (MAJOR BUG)**
+   - **Problem**: WebSocket received 4,339 trades but generated 0 alerts, while polling generated 11 alerts
+   - **Root cause**: WebSocket messages have wrapper structure:
+     ```json
+     {
+       "connection_id": "...",
+       "payload": { <actual trade data> },
+       "timestamp": "...",
+       "topic": "...",
+       "type": "..."
+     }
+     ```
+     Code was reading `size`/`price` from top level (got 0), not from `payload`
+   - **Fix**: Updated `_handle_trade()` to extract from payload:
+     ```python
+     trade_data = data.get("payload") or data.get("data") or data
+     ```
+   - **Result**: WebSocket now generates alerts properly (7 alerts from 1,998 trades after fix)
+
+**Commits made:**
+```
+19534f1 Raise min alert threshold to $1000, exempt multi-trade alerts
+e8cddf8 Fix market lookup to use CLOB API for category detection
+e10ec3d Fix WebSocket trade parsing - extract data from 'payload' field
+36dc7d9 Remove debug logging after fixing WebSocket trade parsing
+```
+
+**Files modified:**
+- `src/whale_detector.py` - Threshold and exempt types
+- `src/polymarket_client.py` - CLOB API for market lookup
+- `src/polymarket_websocket.py` - Payload extraction fix
+
+**Key Configuration (current):**
+| Setting | Value |
+|---------|-------|
+| `min_alert_threshold_usd` | $1,000 |
+| Exempt types | CLUSTER_ACTIVITY, REPEAT_ACTOR, HEAVY_ACTOR |
+| Market lookup API | CLOB (`clob.polymarket.com`) |
+
+---
+
 ## Contact
 
 Project Owner: Spencer H

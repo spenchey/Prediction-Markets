@@ -65,6 +65,11 @@ prediction-market-tracker/
 ### Key Constraint: No Sports Markets
 Sports markets (NFL, NBA, etc.) are filtered OUT. Focus is on political/crypto/events where insider information is more likely.
 
+### Minimum Alert Threshold (updated 2026-01-19)
+- **Minimum**: $1,000 USD (raised from $450)
+- **Exempt types** (bypass minimum): `CLUSTER_ACTIVITY`, `REPEAT_ACTOR`, `HEAVY_ACTOR`
+- Cluster activity and multi-trade execution alerts fire at any amount
+
 ### Filtered High-Frequency Markets (added 2026-01-16)
 The following market types are also filtered out to reduce noise:
 - **15-minute Bitcoin up/down markets** - These generate massive trade volume but are mostly noise
@@ -100,9 +105,41 @@ Real-time trade detection using WebSocket with polling as backup:
 ```json
 {
   "monitor": "hybrid",
-  "websocket": {"connected": true, "trades_received": 1234},
-  "polling": {"trades_received": 56}
+  "websocket": {"connected": true, "trades_received": 1234, "alerts_generated": 10},
+  "polling": {"trades_received": 56, "alerts_generated": 5}
 }
+```
+
+### WebSocket Message Format Fix (2026-01-19)
+
+**Problem**: WebSocket was receiving trades but generating 0 alerts.
+
+**Root cause**: WebSocket messages have a wrapper structure:
+```json
+{
+  "connection_id": "...",
+  "payload": { "size": 100, "price": 0.65, ... },
+  "timestamp": "...",
+  "topic": "...",
+  "type": "..."
+}
+```
+Code was reading `size`/`price` from top level (got 0) instead of from `payload`.
+
+**Fix** in `_handle_trade()`:
+```python
+trade_data = data.get("payload") or data.get("data") or data
+```
+
+### Market Lookup API (2026-01-19)
+
+**Problem**: Market lookups failing with 404, causing all alerts to show "Category: Other".
+
+**Root cause**: `get_market_by_id()` used Gamma API `/markets/{id}` which expects numeric IDs, but trades have condition IDs (hex strings).
+
+**Fix**: Changed to CLOB API which accepts condition IDs:
+```python
+response = await self.http.get(f"{self.clob_base_url}/markets/{market_id}")
 ```
 
 ### Market Question API Fallback (2026-01-16)
