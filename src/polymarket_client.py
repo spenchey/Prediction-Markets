@@ -271,26 +271,35 @@ class PolymarketClient:
             return []
     
     async def get_market_by_id(self, market_id: str) -> Optional[Market]:
-        """Fetch a specific market by its condition ID."""
+        """Fetch a specific market by its condition ID using the CLOB API."""
+        if not market_id:
+            return None
+
         try:
+            # Use CLOB API which accepts condition IDs directly
             response = await self.http.get(
-                f"{self.gamma_base_url}/markets/{market_id}"
+                f"{self.clob_base_url}/markets/{market_id}"
             )
             response.raise_for_status()
             item = response.json()
 
-            category = self._get_market_category(item)
+            # CLOB API uses 'tags' array for categories
+            tags = item.get("tags", [])
+            category = tags[0] if tags else "Other"
+
+            # Parse outcome prices from tokens array
+            tokens = item.get("tokens", [])
+            outcome_prices = {}
+            for token in tokens:
+                outcome_prices[token.get("outcome", "Unknown")] = float(token.get("price", 0.5))
 
             return Market(
-                id=item.get("conditionId", market_id),
+                id=item.get("condition_id", market_id),
                 question=item.get("question", ""),
-                slug=item.get("slug", ""),
-                outcome_prices={
-                    "Yes": float(item.get("outcomePrices", ["0.5", "0.5"])[0]),
-                    "No": float(item.get("outcomePrices", ["0.5", "0.5"])[1])
-                },
-                volume=float(item.get("volume", 0) or 0),
-                liquidity=float(item.get("liquidity", 0) or 0),
+                slug=item.get("market_slug", ""),
+                outcome_prices=outcome_prices if outcome_prices else {"Yes": 0.5, "No": 0.5},
+                volume=0,  # CLOB API doesn't return volume
+                liquidity=0,  # CLOB API doesn't return liquidity
                 end_date=None,
                 active=item.get("active", True),
                 category=category,

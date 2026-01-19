@@ -503,7 +503,8 @@ class HybridTradeMonitor:
                 market_question = self._market_cache[trade.market_id]
             else:
                 # Fetch from API if not in cache and we have a client
-                if self.clients:
+                # Skip if market_id is empty
+                if self.clients and trade.market_id:
                     try:
                         from .polymarket_client import PolymarketClient
                         polymarket_client = None
