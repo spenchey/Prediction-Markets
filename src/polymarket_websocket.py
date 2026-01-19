@@ -222,6 +222,10 @@ class PolymarketWebSocket:
             price = float(item.get("price", 0))
             amount_usd = size * price
 
+            # Debug: Log large trades to verify amount calculation
+            if amount_usd >= 500:
+                logger.info(f"[WS LARGE] ${amount_usd:,.2f} (size={size}, price={price}) - {item.get('title', 'Unknown')[:50]}")
+
             # Parse timestamp (can be in seconds or milliseconds)
             ts = item.get("timestamp")
             if isinstance(ts, int):
