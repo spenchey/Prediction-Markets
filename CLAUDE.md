@@ -366,33 +366,41 @@ curl -X POST https://web-production-9d2d3.up.railway.app/digest/daily
 
 ---
 
-## Twitter Queue (Added 2026-01-15)
+## Twitter Queue (Added 2026-01-15, Updated 2026-01-19)
 
-Semi-automated Twitter/X posting via a private Discord channel. High-value alerts are posted in the **same full format** as the main Discord channels so potential X followers see exactly what subscribers receive.
+Semi-automated Twitter/X posting via a private Discord channel. **Only truly exceptional alerts** are posted - this is a highlight reel, not a firehose.
+
+### Alert Flow
+1. **ALL alerts** → Go to their category thread (Politics, Crypto, World, etc.)
+2. **Exceptional alerts** → ALSO copied to #for-twitter as highlight reel
 
 ### Why Semi-Automated?
 - X API costs $200/month for write access
 - This approach is free and gives you control over what gets posted
-- Rate-limited to ~4 posts/hour to avoid spam
+- Rate-limited to 20 posts/hour (strict criteria naturally limits)
 - Shows real product to potential customers
 
 ### Features
 - **Full alert format** - Same rich embeds as main Discord channels
 - **Hashtags in footer** - Copy entire alert and hashtags come with it
-- **High-value filtering** - Only best alerts are queued
-- **Rate limiting** - Max 4 posts per hour (configurable)
+- **STRICT filtering** - Only truly exceptional alerts make it through
+- **Rate limiting** - Max 20 posts per hour (configurable)
 
-### Filtering Criteria (must meet at least one)
-- Trade amount >= $1,000
-- HIGH severity
-- 3+ trigger signals (multi-signal alert)
-- Contains HIGH_IMPACT, SMART_MONEY, WHALE_TRADE, or CLUSTER_ACTIVITY
+### Twitter-Worthy Criteria (updated 2026-01-19)
+Must meet at least one - designed to be STRICT:
+
+| Tier | Criteria | Why |
+|------|----------|-----|
+| 1 | **$10,000+** | True whale territory - always noteworthy |
+| 2 | **$1,000+ with REPEAT_ACTOR, HEAVY_ACTOR, or CLUSTER** | Multi-trade patterns indicate conviction |
+| 3 | **$5,000+ with SMART_MONEY or NEW_WALLET** | Quality signals - proven winners or first-time whales |
+| 4 | **4+ triggers** | Highly unusual activity regardless of amount |
 
 ### Environment Variables
 ```bash
 DISCORD_TWITTER_WEBHOOK_URL=https://discord.com/api/webhooks/...  # Webhook for #for-twitter
-TWITTER_MIN_AMOUNT=1000        # Minimum USD for Twitter-worthy alerts
-TWITTER_MAX_PER_HOUR=4         # Rate limit
+TWITTER_MIN_AMOUNT=1000        # Base minimum (actual criteria stricter)
+TWITTER_MAX_PER_HOUR=20        # Rate limit (strict criteria limits naturally)
 ```
 
 ### Hashtag Strategy (in footer)

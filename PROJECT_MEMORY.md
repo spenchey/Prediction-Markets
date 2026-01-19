@@ -540,18 +540,34 @@ When working on this project:
      ```
    - **Result**: WebSocket now generates alerts properly (7 alerts from 1,998 trades after fix)
 
+5. **Updated Twitter-worthy criteria (stricter for-twitter highlights)**
+   - **Problem**: for-twitter was getting too many alerts, rate limited at 4/hour first-come-first-served
+   - **Solution**: Stricter criteria so only truly exceptional alerts make it to for-twitter
+   - **New criteria** (must meet one):
+     | Tier | Criteria | Why |
+     |------|----------|-----|
+     | 1 | $10,000+ | True whale territory |
+     | 2 | $1,000+ with REPEAT_ACTOR, HEAVY_ACTOR, or CLUSTER | Multi-trade patterns |
+     | 3 | $5,000+ with SMART_MONEY or NEW_WALLET | Quality signals |
+     | 4 | 4+ triggers | Highly unusual activity |
+   - **Rate limit**: Increased from 4/hour to 20/hour (strict criteria limits naturally)
+   - **Alert flow**: ALL alerts → category thread; Exceptional alerts → ALSO to for-twitter
+
 **Commits made:**
 ```
 19534f1 Raise min alert threshold to $1000, exempt multi-trade alerts
 e8cddf8 Fix market lookup to use CLOB API for category detection
 e10ec3d Fix WebSocket trade parsing - extract data from 'payload' field
 36dc7d9 Remove debug logging after fixing WebSocket trade parsing
+0662740 Stricter Twitter-worthy criteria for for-twitter highlights
 ```
 
 **Files modified:**
 - `src/whale_detector.py` - Threshold and exempt types
 - `src/polymarket_client.py` - CLOB API for market lookup
 - `src/polymarket_websocket.py` - Payload extraction fix
+- `src/alerter.py` - Stricter is_twitter_worthy() criteria
+- `src/config.py` - Rate limit increase
 
 **Key Configuration (current):**
 | Setting | Value |
@@ -559,6 +575,8 @@ e10ec3d Fix WebSocket trade parsing - extract data from 'payload' field
 | `min_alert_threshold_usd` | $1,000 |
 | Exempt types | CLUSTER_ACTIVITY, REPEAT_ACTOR, HEAVY_ACTOR |
 | Market lookup API | CLOB (`clob.polymarket.com`) |
+| Twitter rate limit | 20/hour |
+| Twitter-worthy minimum | $10k (or $1k-$5k with quality signals) |
 
 ---
 
