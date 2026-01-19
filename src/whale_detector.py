@@ -514,7 +514,7 @@ class WhaleDetector:
         exit_threshold_usd: float = 5_000,      # Min USD for exit alerts
         contrarian_threshold: float = 0.15,     # Bet on outcome with <15% odds
         cluster_time_window_minutes: int = 5,   # Time window for cluster detection
-        min_alert_threshold_usd: float = 450,   # Minimum USD for alerts (except cluster/exit)
+        min_alert_threshold_usd: float = 1000,  # Minimum USD for alerts (except exempt types)
         crypto_min_threshold_usd: float = 974,  # Higher threshold for crypto markets
         # VIP wallet detection settings
         vip_min_volume: float = 100_000,        # $100k lifetime volume to be VIP
@@ -561,7 +561,10 @@ class WhaleDetector:
         self.vip_large_trade_threshold = vip_large_trade_threshold
 
         # Alert types exempt from minimum threshold (valuable signals at any size)
-        self.exempt_alert_types = {"CLUSTER_ACTIVITY", "WHALE_EXIT", "VIP_WALLET"}
+        # CLUSTER_ACTIVITY = coordinated wallet activity
+        # REPEAT_ACTOR = 2+ trades in last hour (multi-trade execution)
+        # HEAVY_ACTOR = 5+ trades in last 24 hours (multi-trade execution)
+        self.exempt_alert_types = {"CLUSTER_ACTIVITY", "REPEAT_ACTOR", "HEAVY_ACTOR"}
 
         # Alert types that bypass crypto filtering (high-value signals)
         self.crypto_exempt_types = {"CLUSTER_ACTIVITY", "WHALE_TRADE", "SMART_MONEY", "VIP_WALLET"}
