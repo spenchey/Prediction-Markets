@@ -185,6 +185,7 @@ async def lifespan(app: FastAPI):
     try:
         detector = WhaleDetector(
             whale_threshold_usd=settings.WHALE_THRESHOLD_USDC,
+            new_wallet_threshold_usd=settings.NEW_WALLET_THRESHOLD_USDC,
             std_multiplier=settings.WHALE_STD_MULTIPLIER,
             min_trades_for_stats=settings.MIN_TRADES_FOR_STATS,
             min_alert_threshold_usd=settings.MIN_ALERT_THRESHOLD_USD

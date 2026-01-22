@@ -298,13 +298,13 @@ class WalletProfile:
 
     @property
     def is_repeat_actor(self) -> bool:
-        """Wallet has 2+ trades in last hour (elevated alert)."""
-        return self.trades_last_hour >= 2
+        """Wallet has 3+ trades in last hour (elevated alert) - STRICTER."""
+        return self.trades_last_hour >= 3
 
     @property
     def is_heavy_actor(self) -> bool:
-        """Wallet has 5+ trades in last 24h (high priority)."""
-        return self.trades_last_24h >= 5
+        """Wallet has 10+ trades in last 24h (high priority) - STRICTER."""
+        return self.trades_last_24h >= 10
 
     @property
     def is_new_wallet(self) -> bool:
@@ -338,11 +338,11 @@ class WalletProfile:
 
     @property
     def is_smart_money(self) -> bool:
-        """Wallet has >60% win rate with significant volume."""
+        """Wallet has >65% win rate with significant volume - STRICTER."""
         win_rate = self.win_rate
         if win_rate is None:
             return False
-        return win_rate >= 0.60 and self.total_volume_usd >= 50_000
+        return win_rate >= 0.65 and self.total_volume_usd >= 50_000
 
     @property
     def roi(self) -> Optional[float]:
@@ -514,13 +514,15 @@ class WhaleDetector:
         exit_threshold_usd: float = 5_000,      # Min USD for exit alerts
         contrarian_threshold: float = 0.15,     # Bet on outcome with <15% odds
         cluster_time_window_minutes: int = 5,   # Time window for cluster detection
-        min_alert_threshold_usd: float = 1000,  # Minimum USD for alerts (except multi-trade patterns)
+        min_alert_threshold_usd: float = 2000,  # Minimum USD for alerts (RAISED from $1k to $2k)
         crypto_min_threshold_usd: float = 974,  # Higher threshold for crypto markets
         # VIP wallet detection settings
         vip_min_volume: float = 100_000,        # $100k lifetime volume to be VIP
         vip_min_win_rate: float = 0.55,         # 55% win rate to be VIP
         vip_min_large_trades: int = 5,          # 5+ large trades to be VIP
         vip_large_trade_threshold: float = 5_000,  # What counts as "large"
+        # Multi-signal requirement (Elite Signals Only mode)
+        min_triggers_required: int = 2,         # Require 2+ signals (except exempt types)
     ):
         """
         Initialize the whale detector with comprehensive detection algorithms.
@@ -553,6 +555,7 @@ class WhaleDetector:
         self.cluster_time_window = timedelta(minutes=cluster_time_window_minutes)
         self.min_alert_threshold_usd = min_alert_threshold_usd
         self.crypto_min_threshold_usd = crypto_min_threshold_usd
+        self.min_triggers_required = min_triggers_required
 
         # VIP wallet detection thresholds
         self.vip_min_volume = vip_min_volume
@@ -560,11 +563,13 @@ class WhaleDetector:
         self.vip_min_large_trades = vip_min_large_trades
         self.vip_large_trade_threshold = vip_large_trade_threshold
 
-        # Alert types exempt from minimum threshold (valuable signals at any size)
-        # CLUSTER_ACTIVITY = coordinated wallet activity
-        # REPEAT_ACTOR = 2+ trades in last hour (multi-trade execution)
-        # HEAVY_ACTOR = 5+ trades in last 24 hours (multi-trade execution)
-        self.exempt_alert_types = {"CLUSTER_ACTIVITY", "REPEAT_ACTOR", "HEAVY_ACTOR"}
+        # NEW: Stricter thresholds for "Elite Signals Only" mode
+        self.new_wallet_threshold_usd = new_wallet_threshold_usd  # Store for later increase
+        self.std_multiplier = std_multiplier  # Already stored, but noting we'll increase it
+
+        # Alert types exempt from minimum threshold AND multi-signal requirement
+        # These are so significant they always alert alone
+        self.exempt_alert_types = {"WHALE_TRADE", "CLUSTER_ACTIVITY", "VIP_WALLET", "ENTITY_ACTIVITY"}
 
         # Alert types that bypass crypto filtering (high-value signals)
         self.crypto_exempt_types = {"CLUSTER_ACTIVITY", "WHALE_TRADE", "SMART_MONEY", "VIP_WALLET"}
@@ -1169,18 +1174,18 @@ class WhaleDetector:
                 severity_score
             ))
 
-        # 3. Market-specific anomaly (from ChatGPT MVP)
-        if market_n >= 20 and market_std > 0:
-            market_z = (trade.amount_usd - market_mean) / market_std
-            if market_z >= self.std_multiplier:
-                severity_score = 7 if market_z < self.std_multiplier + 2 else 9
-                if max_z_score is None or market_z > max_z_score:
-                    max_z_score = market_z
-                triggered_conditions.append((
-                    "MARKET_ANOMALY",
-                    f"🎯 MARKET ANOMALY: z={market_z:.2f} (market avg ${market_mean:,.0f}, trade ${trade.amount_usd:,.0f})",
-                    severity_score
-                ))
+        # 3. Market-specific anomaly (DISABLED - redundant with UNUSUAL_SIZE)
+        # if market_n >= 20 and market_std > 0:
+        #     market_z = (trade.amount_usd - market_mean) / market_std
+        #     if market_z >= self.std_multiplier:
+        #         severity_score = 7 if market_z < self.std_multiplier + 2 else 9
+        #         if max_z_score is None or market_z > max_z_score:
+        #             max_z_score = market_z
+        #         triggered_conditions.append((
+        #             "MARKET_ANOMALY",
+        #             f"🎯 MARKET ANOMALY: z={market_z:.2f} (market avg ${market_mean:,.0f}, trade ${trade.amount_usd:,.0f})",
+        #             severity_score
+        #         ))
 
         # 4. New wallet making significant trade
         # Skip for anonymous traders (platforms that don't expose trader identity)
@@ -1192,15 +1197,15 @@ class WhaleDetector:
                 severity_score
             ))
 
-        # 5. Focused wallet making big trade (from ChatGPT MVP)
+        # 5. Focused wallet (DISABLED - not predictive enough)
         # Skip for anonymous traders
-        if profile.is_focused and trade.amount_usd >= self.focused_wallet_threshold_usd and not self._is_anonymous_trader(trade.trader_address):
-            severity_score = 7
-            triggered_conditions.append((
-                "FOCUSED_WALLET",
-                f"🎯 FOCUSED WALLET: Wallet concentrated in {len(profile.markets_traded)} markets placed ${trade.amount_usd:,.0f} bet",
-                severity_score
-            ))
+        # if profile.is_focused and trade.amount_usd >= self.focused_wallet_threshold_usd and not self._is_anonymous_trader(trade.trader_address):
+        #     severity_score = 7
+        #     triggered_conditions.append((
+        #         "FOCUSED_WALLET",
+        #         f"🎯 FOCUSED WALLET: Wallet concentrated in {len(profile.markets_traded)} markets placed ${trade.amount_usd:,.0f} bet",
+        #         severity_score
+        #     ))
 
         # 6. Smart money (high win-rate wallet) making a trade
         # Skip for anonymous traders
@@ -1257,53 +1262,53 @@ class WhaleDetector:
                 severity_score
             ))
 
-        # 9. Extreme Confidence Detection (>95% or <5% probability bets)
-        is_extreme, extreme_direction = self._is_extreme_confidence(trade)
-        if is_extreme and trade.amount_usd >= 2000:
-            prob = self._get_outcome_probability(trade)
-            if extreme_direction == "HIGH":
-                severity_score = 6  # Betting on near-certainty (less interesting)
-                emoji = "📈"
-                desc = f"near-certain outcome ({prob:.0%})"
-            else:
-                severity_score = 9  # Betting on longshot (very interesting!)
-                emoji = "🎰"
-                desc = f"longshot ({prob:.0%} probability)"
+        # 9. Extreme Confidence Detection (DISABLED - too common, not actionable)
+        # is_extreme, extreme_direction = self._is_extreme_confidence(trade)
+        # if is_extreme and trade.amount_usd >= 2000:
+        #     prob = self._get_outcome_probability(trade)
+        #     if extreme_direction == "HIGH":
+        #         severity_score = 6  # Betting on near-certainty (less interesting)
+        #         emoji = "📈"
+        #         desc = f"near-certain outcome ({prob:.0%})"
+        #     else:
+        #         severity_score = 9  # Betting on longshot (very interesting!)
+        #         emoji = "🎰"
+        #         desc = f"longshot ({prob:.0%} probability)"
+        #
+        #     triggered_conditions.append((
+        #         "EXTREME_CONFIDENCE",
+        #         f"{emoji} EXTREME CONFIDENCE: ${trade.amount_usd:,.0f} bet on {desc}",
+        #         severity_score
+        #     ))
 
-            triggered_conditions.append((
-                "EXTREME_CONFIDENCE",
-                f"{emoji} EXTREME CONFIDENCE: ${trade.amount_usd:,.0f} bet on {desc}",
-                severity_score
-            ))
-
-        # 10. Whale Exit Detection (large sells)
+        # 10. Whale Exit Detection (DISABLED - hard to interpret, noisy)
         # Skip for anonymous traders
-        if trade.side.lower() == "sell" and trade.amount_usd >= self.exit_threshold_usd and not self._is_anonymous_trader(trade.trader_address):
-            # Check if this wallet has been a significant buyer
-            if profile.buy_volume_usd >= self.whale_threshold_usd:
-                severity_score = 8  # Whale exiting is significant
-                triggered_conditions.append((
-                    "WHALE_EXIT",
-                    f"🚪 WHALE EXIT: Wallet selling ${trade.amount_usd:,.0f} (prev bought ${profile.buy_volume_usd:,.0f})",
-                    severity_score
-                ))
+        # if trade.side.lower() == "sell" and trade.amount_usd >= self.exit_threshold_usd and not self._is_anonymous_trader(trade.trader_address):
+        #     # Check if this wallet has been a significant buyer
+        #     if profile.buy_volume_usd >= self.whale_threshold_usd:
+        #         severity_score = 8  # Whale exiting is significant
+        #         triggered_conditions.append((
+        #             "WHALE_EXIT",
+        #             f"🚪 WHALE EXIT: Wallet selling ${trade.amount_usd:,.0f} (prev bought ${profile.buy_volume_usd:,.0f})",
+        #             severity_score
+        #         ))
 
-        # 11. Contrarian Activity Detection (betting against consensus)
-        is_contrarian, prob = self._is_contrarian(trade)
-        if is_contrarian and trade.amount_usd >= 3000:
-            severity_score = 9  # Contrarian bets are very interesting
-            triggered_conditions.append((
-                "CONTRARIAN",
-                f"🔮 CONTRARIAN: ${trade.amount_usd:,.0f} bet on {prob:.0%} underdog outcome",
-                severity_score
-            ))
+        # 11. Contrarian Activity Detection (DISABLED - too common, not actionable)
+        # is_contrarian, prob = self._is_contrarian(trade)
+        # if is_contrarian and trade.amount_usd >= 3000:
+        #     severity_score = 9  # Contrarian bets are very interesting
+        #     triggered_conditions.append((
+        #         "CONTRARIAN",
+        #         f"🔮 CONTRARIAN: ${trade.amount_usd:,.0f} bet on {prob:.0%} underdog outcome",
+        #         severity_score
+        #     ))
 
-        # 12. Cluster Activity Detection (coordinated wallets)
+        # 12. Cluster Activity Detection (coordinated wallets) - STRICTER minimum
         # Skip for anonymous traders (can't correlate wallets without identity)
         cluster_wallets = None
         if not self._is_anonymous_trader(trade.trader_address):
             cluster_wallets = self._detect_cluster_activity(trade)
-        if cluster_wallets and len(cluster_wallets) >= 2 and trade.amount_usd >= 2000:
+        if cluster_wallets and len(cluster_wallets) >= 2 and trade.amount_usd >= 2000:  # $2k minimum for coordinated activity
             severity_score = 9  # Coordinated activity is very suspicious
             triggered_conditions.append((
                 "CLUSTER_ACTIVITY",
@@ -1315,10 +1320,10 @@ class WhaleDetector:
         # ADVANCED DETECTORS (from ChatGPT v5)
         # ==========================================
 
-        # 13. High Impact Trade Detection
+        # 13. High Impact Trade Detection (STRICTER - requires 25%+ of hourly volume)
         impact_ratio = self._calculate_impact_ratio(trade)
-        if impact_ratio >= self.impact_ratio_threshold and trade.amount_usd >= 1000:
-            severity_score = 8 if impact_ratio >= 0.15 else 7
+        if impact_ratio >= 0.25 and trade.amount_usd >= 1000:  # Raised from 10% to 25%
+            severity_score = 8 if impact_ratio >= 0.50 else 7
             triggered_conditions.append((
                 "HIGH_IMPACT",
                 f"💥 HIGH IMPACT: ${trade.amount_usd:,.0f} is {impact_ratio:.0%} of market's hourly volume",
@@ -1359,6 +1364,13 @@ class WhaleDetector:
         alert_types = [c[0] for c in filtered_conditions]
         messages = [c[1] for c in filtered_conditions]
         max_severity_score = max(c[2] for c in filtered_conditions)
+
+        # MULTI-SIGNAL REQUIREMENT: Require 2+ signals unless exempt
+        # Exempt types are so significant they can alert alone
+        has_exempt_type = any(atype in self.exempt_alert_types for atype in alert_types)
+        if not has_exempt_type and len(alert_types) < self.min_triggers_required:
+            logger.debug(f"Filtered: Only {len(alert_types)} trigger(s), need {self.min_triggers_required} (${trade.amount_usd:.0f})")
+            return []
 
         # Create single consolidated alert
         consolidated_alert = WhaleAlert(

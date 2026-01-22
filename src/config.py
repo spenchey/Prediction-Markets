@@ -53,14 +53,14 @@ class Settings(BaseSettings):
     KALSHI_PRIVATE_KEY_B64: Optional[str] = None  # Base64-encoded RSA private key
 
     # ============================================
-    # WHALE DETECTION SETTINGS
+    # WHALE DETECTION SETTINGS (Elite Signals Only - Stricter)
     # ============================================
     WHALE_THRESHOLD_USDC: float = 10000.0  # $10,000 - minimum for whale alerts
-    NEW_WALLET_THRESHOLD_USDC: float = 1000.0  # $1,000 - minimum for new wallet alerts
+    NEW_WALLET_THRESHOLD_USDC: float = 5000.0  # $5,000 - new wallets must be significant (raised from $1k)
     FOCUSED_WALLET_THRESHOLD_USDC: float = 5000.0  # $5,000 - minimum for focused wallet alerts
-    WHALE_STD_MULTIPLIER: float = 3.0  # Z-score threshold for statistical anomaly
+    WHALE_STD_MULTIPLIER: float = 4.0  # Z-score threshold for statistical anomaly (raised from 3.0)
     MIN_TRADES_FOR_STATS: int = 100  # Minimum trades before using statistics
-    MIN_ALERT_THRESHOLD_USD: float = 1000.0  # $1,000 - minimum USD to trigger any alert (except exempt types)
+    MIN_ALERT_THRESHOLD_USD: float = 2000.0  # $2,000 - minimum USD to trigger any alert (raised from $1k)
 
     # ============================================
     # MARKET FILTERING SETTINGS
