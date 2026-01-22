@@ -1035,6 +1035,64 @@ class Alerter:
             logger.error(f"Error sending digest email: {e}")
             return False
 
+    async def send_message(
+        self,
+        message: str,
+        channels: List[str] = None
+    ) -> Dict[str, bool]:
+        """
+        Send a plain text message to specified channels (for system alerts, not whale alerts).
+
+        Args:
+            message: The message text to send
+            channels: List of channel names to send to (e.g., ['discord', 'email'])
+                     If None, sends to all channels
+
+        Returns:
+            Dict mapping channel name to success boolean
+        """
+        results = {}
+
+        for channel in self.channels:
+            # Filter by requested channels if specified
+            if channels and channel.name.lower() not in [c.lower() for c in channels]:
+                continue
+
+            try:
+                # Only send to Discord for system messages (no email spam)
+                if channel.name == "Discord":
+                    import httpx
+                    async with httpx.AsyncClient() as client:
+                        # Format message for Discord
+                        payload = {
+                            "content": message
+                        }
+
+                        # Add thread_id if this is a Discord channel with thread routing
+                        webhook_url = channel.webhook_url
+                        if hasattr(channel, 'thread_id') and channel.thread_id:
+                            webhook_url = f"{webhook_url}?thread_id={channel.thread_id}"
+
+                        response = await client.post(
+                            webhook_url,
+                            json=payload,
+                            timeout=10.0
+                        )
+
+                        if response.status_code == 204:
+                            results[channel.name] = True
+                        else:
+                            logger.error(f"Discord message failed: {response.status_code}")
+                            results[channel.name] = False
+
+            except Exception as e:
+                logger.error(f"Error sending message to {channel.name}: {e}")
+                results[channel.name] = False
+
+        success = sum(1 for v in results.values() if v)
+        logger.info(f"📢 Message sent to {success}/{len(results)} requested channels")
+        return results
+
 
 def create_default_alerter() -> Alerter:
     """Create alerter with all configured channels."""

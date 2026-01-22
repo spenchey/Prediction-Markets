@@ -15,9 +15,9 @@ Type: trades
 """
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Callable, List, Dict, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import websockets
 from websockets.exceptions import ConnectionClosed, WebSocketException
@@ -30,11 +30,12 @@ from .polymarket_client import Trade
 class WebSocketConfig:
     """Configuration for the WebSocket client."""
     url: str = "wss://ws-live-data.polymarket.com"
-    reconnect_delay: float = 5.0  # Seconds to wait before reconnecting
+    reconnect_delays: List[float] = field(default_factory=lambda: [5.0, 10.0, 20.0, 60.0])  # Exponential backoff
     max_reconnect_attempts: int = 999999  # Effectively unlimited reconnect attempts
     ping_interval: float = 30.0  # Seconds between ping messages
     ping_timeout: float = 10.0  # Seconds to wait for pong response
     successful_connection_threshold: int = 300  # Seconds of successful connection resets reconnect counter
+    downtime_alert_threshold: int = 1800  # Seconds (30 min) before alerting about downtime
 
 
 class PolymarketWebSocket:
@@ -76,6 +77,8 @@ class PolymarketWebSocket:
         self._trades_received = 0
         self._last_trade_time: Optional[datetime] = None
         self._connection_start_time: Optional[datetime] = None  # Track when connection succeeded
+        self._disconnect_time: Optional[datetime] = None  # Track when connection was lost
+        self._last_downtime_alert: Optional[datetime] = None  # Track when we last alerted about downtime
 
         # Track seen trade IDs to avoid duplicates (shared with polling)
         self.seen_trade_ids: set = set()
@@ -93,10 +96,16 @@ class PolymarketWebSocket:
                 await self._connect_and_listen()
             except ConnectionClosed as e:
                 logger.warning(f"WebSocket connection closed: {e}")
+                if self._disconnect_time is None:
+                    self._disconnect_time = datetime.now()
             except WebSocketException as e:
                 logger.error(f"WebSocket error: {e}")
+                if self._disconnect_time is None:
+                    self._disconnect_time = datetime.now()
             except Exception as e:
                 logger.error(f"Unexpected WebSocket error: {e}")
+                if self._disconnect_time is None:
+                    self._disconnect_time = datetime.now()
 
             if self._running:
                 self._reconnect_attempts += 1
@@ -106,8 +115,12 @@ class PolymarketWebSocket:
                     self._running = False
                     break
 
-                logger.info(f"Reconnecting in {self.config.reconnect_delay}s (attempt {self._reconnect_attempts})...")
-                await asyncio.sleep(self.config.reconnect_delay)
+                # Exponential backoff: use delay based on attempt count
+                delay_index = min(self._reconnect_attempts - 1, len(self.config.reconnect_delays) - 1)
+                delay = self.config.reconnect_delays[delay_index]
+
+                logger.info(f"Reconnecting in {delay}s (attempt {self._reconnect_attempts}, exponential backoff)...")
+                await asyncio.sleep(delay)
 
     async def _connect_and_listen(self):
         """Establish connection and listen for messages."""
@@ -121,6 +134,7 @@ class PolymarketWebSocket:
             self._ws = ws
             self._reconnect_attempts = 0  # Reset on successful connection
             self._connection_start_time = datetime.now()
+            self._disconnect_time = None  # Clear disconnect time on successful connection
 
             logger.info("WebSocket connected successfully")
 
@@ -326,12 +340,18 @@ class PolymarketWebSocket:
 
     def get_stats(self) -> Dict[str, Any]:
         """Get WebSocket statistics."""
+        downtime_seconds = None
+        if self._disconnect_time and not self.is_connected:
+            downtime_seconds = (datetime.now() - self._disconnect_time).total_seconds()
+
         return {
             "connected": self.is_connected,
             "trades_received": self._trades_received,
             "last_trade_time": self._last_trade_time.isoformat() if self._last_trade_time else None,
             "reconnect_attempts": self._reconnect_attempts,
-            "seen_trade_ids_count": len(self.seen_trade_ids)
+            "seen_trade_ids_count": len(self.seen_trade_ids),
+            "downtime_seconds": downtime_seconds,
+            "disconnect_time": self._disconnect_time.isoformat() if self._disconnect_time else None
         }
 
     @property
@@ -396,10 +416,14 @@ class HybridTradeMonitor:
         self._ws_client: Optional[PolymarketWebSocket] = None
         self._ws_task: Optional[asyncio.Task] = None
         self._poll_task: Optional[asyncio.Task] = None
+        self._monitor_task: Optional[asyncio.Task] = None
         self._running = False
 
         # Market info cache
         self._market_cache: Dict[str, str] = {}
+
+        # Downtime alerting
+        self._alerter = None  # Will be set by caller if alerts are needed
 
     async def start(self):
         """Start both WebSocket and polling monitors."""
@@ -419,15 +443,16 @@ class HybridTradeMonitor:
         # Share seen trades set
         self._ws_client.seen_trade_ids = self.seen_trades
 
-        # Start both tasks
+        # Start all tasks
         self._ws_task = asyncio.create_task(self._run_websocket())
         self._poll_task = asyncio.create_task(self._run_polling())
+        self._monitor_task = asyncio.create_task(self._run_downtime_monitor())
 
-        # Wait for both tasks
-        await asyncio.gather(self._ws_task, self._poll_task, return_exceptions=True)
+        # Wait for all tasks
+        await asyncio.gather(self._ws_task, self._poll_task, self._monitor_task, return_exceptions=True)
 
     async def stop(self):
-        """Stop both monitors."""
+        """Stop all monitors."""
         self._running = False
 
         if self._ws_client:
@@ -439,6 +464,9 @@ class HybridTradeMonitor:
         if self._poll_task:
             self._poll_task.cancel()
 
+        if self._monitor_task:
+            self._monitor_task.cancel()
+
         logger.info("Hybrid trade monitor stopped")
 
     async def _run_websocket(self):
@@ -449,6 +477,65 @@ class HybridTradeMonitor:
             pass
         except Exception as e:
             logger.error(f"WebSocket monitor error: {e}")
+
+    async def _run_downtime_monitor(self):
+        """Monitor WebSocket health and alert if down for extended period."""
+        check_interval = 60  # Check every minute
+
+        while self._running:
+            try:
+                await asyncio.sleep(check_interval)
+
+                if not self._running:
+                    break
+
+                # Check if WebSocket has been down for too long
+                if self._ws_client and not self._ws_client.is_connected:
+                    stats = self._ws_client.get_stats()
+                    downtime_seconds = stats.get('downtime_seconds')
+
+                    if downtime_seconds and downtime_seconds >= self._ws_client.config.downtime_alert_threshold:
+                        # Check if we haven't alerted recently (avoid spam)
+                        should_alert = True
+                        if self._ws_client._last_downtime_alert:
+                            time_since_last_alert = (datetime.now() - self._ws_client._last_downtime_alert).total_seconds()
+                            # Only alert once per hour
+                            should_alert = time_since_last_alert >= 3600
+
+                        if should_alert:
+                            downtime_minutes = downtime_seconds / 60
+                            logger.error(f"⚠️ WebSocket has been disconnected for {downtime_minutes:.1f} minutes")
+
+                            # Send alert if alerter is available
+                            if self._alerter:
+                                try:
+                                    # Create a special alert for WebSocket downtime
+                                    alert_message = (
+                                        f"⚠️ **WebSocket Downtime Alert**\n\n"
+                                        f"The Polymarket WebSocket has been disconnected for **{downtime_minutes:.0f} minutes**.\n\n"
+                                        f"📊 Status:\n"
+                                        f"- Reconnect attempts: {self._ws_client._reconnect_attempts}\n"
+                                        f"- Polling backup: Active ✅\n"
+                                        f"- Whale safety net: Active ✅\n\n"
+                                        f"The system is still monitoring via polling, but may have reduced latency. "
+                                        f"Large trades (>$10k) are still being caught by the whale safety net."
+                                    )
+
+                                    await self._alerter.send_message(
+                                        message=alert_message,
+                                        channels=['discord']  # Only send to Discord, not Twitter queue
+                                    )
+
+                                    self._ws_client._last_downtime_alert = datetime.now()
+                                    logger.info("Sent WebSocket downtime alert to Discord")
+
+                                except Exception as e:
+                                    logger.error(f"Failed to send downtime alert: {e}")
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Downtime monitor error: {e}")
 
     async def _run_polling(self):
         """Run the backup polling loop."""

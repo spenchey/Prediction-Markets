@@ -222,6 +222,8 @@ async def lifespan(app: FastAPI):
                     poll_interval=settings.POLL_INTERVAL,  # Backup polling (30s)
                     clients=platform_clients
                 )
+                # Pass alerter for WebSocket downtime alerts
+                hybrid_monitor._alerter = alerter
                 monitor_task = asyncio.create_task(hybrid_monitor.start())
                 logger.info("✅ Hybrid trade monitor started")
                 logger.info("   WebSocket: Real-time Polymarket trades (~100ms latency)")
