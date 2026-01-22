@@ -186,7 +186,8 @@ async def lifespan(app: FastAPI):
         detector = WhaleDetector(
             whale_threshold_usd=settings.WHALE_THRESHOLD_USDC,
             std_multiplier=settings.WHALE_STD_MULTIPLIER,
-            min_trades_for_stats=settings.MIN_TRADES_FOR_STATS
+            min_trades_for_stats=settings.MIN_TRADES_FOR_STATS,
+            min_alert_threshold_usd=settings.MIN_ALERT_THRESHOLD_USD
         )
         logger.info("✅ Whale detector initialized")
     except Exception as e:

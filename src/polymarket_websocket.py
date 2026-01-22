@@ -31,9 +31,10 @@ class WebSocketConfig:
     """Configuration for the WebSocket client."""
     url: str = "wss://ws-live-data.polymarket.com"
     reconnect_delay: float = 5.0  # Seconds to wait before reconnecting
-    max_reconnect_attempts: int = 10  # Max consecutive reconnect attempts
+    max_reconnect_attempts: int = 999999  # Effectively unlimited reconnect attempts
     ping_interval: float = 30.0  # Seconds between ping messages
     ping_timeout: float = 10.0  # Seconds to wait for pong response
+    successful_connection_threshold: int = 300  # Seconds of successful connection resets reconnect counter
 
 
 class PolymarketWebSocket:
@@ -74,6 +75,7 @@ class PolymarketWebSocket:
         self._reconnect_attempts = 0
         self._trades_received = 0
         self._last_trade_time: Optional[datetime] = None
+        self._connection_start_time: Optional[datetime] = None  # Track when connection succeeded
 
         # Track seen trade IDs to avoid duplicates (shared with polling)
         self.seen_trade_ids: set = set()
@@ -118,6 +120,7 @@ class PolymarketWebSocket:
         ) as ws:
             self._ws = ws
             self._reconnect_attempts = 0  # Reset on successful connection
+            self._connection_start_time = datetime.now()
 
             logger.info("WebSocket connected successfully")
 
@@ -136,6 +139,13 @@ class PolymarketWebSocket:
             async for message in ws:
                 try:
                     await self._handle_message(message)
+
+                    # Reset reconnect counter if we've been successfully connected for a while
+                    if self._connection_start_time:
+                        uptime = (datetime.now() - self._connection_start_time).total_seconds()
+                        if uptime > self.config.successful_connection_threshold and self._reconnect_attempts > 0:
+                            logger.info(f"Connection stable for {int(uptime)}s, resetting reconnect counter")
+                            self._reconnect_attempts = 0
                 except Exception as e:
                     logger.error(f"Error handling message: {e}")
 
@@ -460,6 +470,7 @@ class HybridTradeMonitor:
                             continue
 
                         async with client as c:
+                            # Primary polling: fetch recent trades
                             trades = await c.get_recent_trades(limit=500)
 
                             # Filter to trades we haven't seen
@@ -474,6 +485,21 @@ class HybridTradeMonitor:
                                 # Analyze trades
                                 await self._analyze_trades(new_trades, source="poll")
                                 self.poll_trades_processed += len(new_trades)
+
+                            # WHALE SAFETY NET: Secondary query specifically for large trades
+                            # This ensures we NEVER miss whale trades even during high volume
+                            whale_threshold = self.detector.whale_threshold_usd if self.detector else 10000
+                            whale_trades = [t for t in trades if t.amount_usd >= whale_threshold and t.id not in self.seen_trades]
+
+                            if whale_trades:
+                                logger.info(f"🐋 Whale safety net caught {len(whale_trades)} large trades (>=${whale_threshold:,.0f})")
+
+                                for trade in whale_trades:
+                                    self.seen_trades.add(trade.id)
+
+                                # Analyze whale trades with high priority
+                                await self._analyze_trades(whale_trades, source="whale_safety_net")
+                                self.poll_trades_processed += len(whale_trades)
 
                     except Exception as e:
                         logger.error(f"Error polling {platform_name}: {e}")

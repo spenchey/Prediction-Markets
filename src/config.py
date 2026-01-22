@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     FOCUSED_WALLET_THRESHOLD_USDC: float = 5000.0  # $5,000 - minimum for focused wallet alerts
     WHALE_STD_MULTIPLIER: float = 3.0  # Z-score threshold for statistical anomaly
     MIN_TRADES_FOR_STATS: int = 100  # Minimum trades before using statistics
+    MIN_ALERT_THRESHOLD_USD: float = 1000.0  # $1,000 - minimum USD to trigger any alert (except exempt types)
 
     # ============================================
     # MARKET FILTERING SETTINGS
