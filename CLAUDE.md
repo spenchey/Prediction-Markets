@@ -1538,3 +1538,88 @@ Create interactive D3.js charts for whale activity:
 ### Skills Discovery Resource
 
 For finding more skills: [awesome-claude-skills](https://github.com/travisvn/awesome-claude-skills)
+
+---
+
+## Session Log (2026-01-23) - Major Alert System Overhaul
+
+### Problem: Too Many Alerts
+
+User was receiving excessive alerts including:
+- VIP wallet alerts for $1-$23 trades
+- Entity detection alerts showing "2227-wallet entity (95% confidence)" - false positives from shared CEX funders
+- Too many low-value signals cluttering the feed
+
+### Research: Competitor Analysis
+
+Researched industry leaders to understand best practices:
+
+| Platform | Minimum Threshold | Key Criteria |
+|----------|------------------|--------------|
+| [Polywhaler](https://www.polywhaler.com/) | **$10,000** | Impact scores, insider risk indicators |
+| [Oddpool](https://www.oddpool.com/whales) | **$1,000** default, recommends $5k-$10k+ | Customizable filters |
+| [PolyTrack](https://www.polytrackhq.app/blog/polytrack-best-whale-tracker) | **$10,000** for alerts | Trader must have $100k+ volume, 55%+ win rate, 50+ positions |
+
+**Key Finding**: Industry standard is $10,000+ for whale alerts, not $1,000-$2,000.
+
+### Solution: Complete Alert System Overhaul
+
+#### 1. Raised Thresholds to Industry Standard
+- `MIN_ALERT_THRESHOLD_USD`: $2,000 → **$10,000**
+- `SMART_MONEY_MIN_VOLUME`: $50,000 → **$100,000**
+- `SMART_MONEY_MIN_RESOLVED`: 10 → **50** positions
+
+#### 2. Reduced Alert Types (14 → 4)
+
+**Active Alerts:**
+| Alert | Criteria |
+|-------|----------|
+| `WHALE_TRADE` | Single trade ≥ $10,000 |
+| `SMART_MONEY` | $100k+ volume, 55%+ win rate, 50+ positions, making $5k+ trade |
+| `CLUSTER_ACTIVITY` | Multiple wallets trading same market within 5 minutes |
+| `CONCENTRATED_ACTIVITY` | Wallet making repeated bets totaling $5k+ on same market in 1 hour |
+
+**Disabled Alerts (too noisy):**
+- `UNUSUAL_SIZE`, `MARKET_ANOMALY`, `NEW_WALLET`, `FOCUSED_WALLET`
+- `VIP_WALLET`, `REPEAT_ACTOR`, `HEAVY_ACTOR`, `EXTREME_CONFIDENCE`
+- `WHALE_EXIT`, `CONTRARIAN`, `HIGH_IMPACT`, `ENTITY_ACTIVITY`
+
+#### 3. New: CONCENTRATED_ACTIVITY Detection
+
+Detects patterns like "new wallet makes $500 x 10 trades = $5k cumulative on same market in 1 hour":
+
+```
+🎯 CONCENTRATED: NEW WALLET made 10 trades totaling $5,000 on this market in 60min
+```
+
+**Logic:**
+- Tracks cumulative volume per wallet per market within configurable window (default: 1 hour)
+- Triggers when: cumulative ≥ $5,000 AND trade_count ≥ 2
+- Higher severity (9) for new wallets (≤20 total trades), lower (8) for established wallets
+
+**Config:**
+```python
+CONCENTRATED_ACTIVITY_THRESHOLD: float = 5000.0  # $5k cumulative
+CONCENTRATED_ACTIVITY_WINDOW_MINUTES: int = 60   # Within 1 hour
+```
+
+#### 4. Fixed Entity Detection False Positives
+
+Added filter to skip entities with 50+ wallets (likely CEX-funded clusters, not actual coordinated activity).
+
+### Files Changed
+- `src/config.py` - Updated thresholds, added concentrated activity settings
+- `src/whale_detector.py` - Disabled 10 alert types, added `_check_concentrated_activity()` method
+- `src/main.py` - Updated WhaleDetector initialization
+- `CLAUDE.md` - Updated documentation
+
+### Commits
+- `f427677` - Add $5,000 minimum threshold for VIP wallet alerts
+- `cc1f629` - Filter out giant entities (50+ wallets) from alerts
+- `ae7e0f8` - Major alert overhaul based on competitor research
+
+### Expected Impact
+- **Dramatically fewer alerts** - Only truly significant trades
+- **Higher signal quality** - Industry-standard thresholds
+- **New pattern detection** - Catches accumulation via multiple smaller trades
+- **No more CEX false positives** - Giant entity clusters filtered out
