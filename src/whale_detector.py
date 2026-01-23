@@ -521,6 +521,7 @@ class WhaleDetector:
         vip_min_win_rate: float = 0.55,         # 55% win rate to be VIP
         vip_min_large_trades: int = 5,          # 5+ large trades to be VIP
         vip_large_trade_threshold: float = 5_000,  # What counts as "large"
+        vip_min_alert_threshold: float = 5_000,  # $5k min for VIP alerts (single trade OR 24h cumulative)
         # Multi-signal requirement (Elite Signals Only mode)
         min_triggers_required: int = 2,         # Require 2+ signals (except exempt types)
     ):
@@ -562,6 +563,7 @@ class WhaleDetector:
         self.vip_min_win_rate = vip_min_win_rate
         self.vip_min_large_trades = vip_min_large_trades
         self.vip_large_trade_threshold = vip_large_trade_threshold
+        self.vip_min_alert_threshold = vip_min_alert_threshold
 
         # NEW: Stricter thresholds for "Elite Signals Only" mode
         self.new_wallet_threshold_usd = new_wallet_threshold_usd  # Store for later increase
@@ -591,6 +593,10 @@ class WhaleDetector:
 
         # NEW: Market prices cache (for contrarian/extreme confidence detection)
         self.market_prices: Dict[str, Dict[str, float]] = {}  # market_id -> {"Yes": 0.65, "No": 0.35}
+
+        # Track 24-hour volume per wallet per market for VIP alerts
+        # Structure: {wallet_address: {market_id: [(timestamp, amount_usd), ...]}}
+        self.wallet_market_volume_24h: Dict[str, Dict[str, List[tuple]]] = {}
 
         # NEW: Cluster detection - track recent trades by market for timing analysis
         # Structure: market_id -> [(wallet_address, timestamp, amount_usd), ...]
@@ -626,6 +632,38 @@ class WhaleDetector:
         if not trader_address:
             return True
         return trader_address.startswith(self.anonymous_trader_prefixes)
+
+    def _get_wallet_market_volume_24h(self, wallet_address: str, market_id: str, current_trade_amount: float, current_time: datetime) -> float:
+        """
+        Get 24-hour cumulative volume for a wallet on a specific market.
+        Also records the current trade in the tracking structure.
+
+        Returns total volume including the current trade.
+        """
+        now = current_time or datetime.utcnow()
+        cutoff = now - timedelta(hours=24)
+
+        # Initialize tracking for this wallet if needed
+        if wallet_address not in self.wallet_market_volume_24h:
+            self.wallet_market_volume_24h[wallet_address] = {}
+
+        # Initialize tracking for this market if needed
+        if market_id not in self.wallet_market_volume_24h[wallet_address]:
+            self.wallet_market_volume_24h[wallet_address][market_id] = []
+
+        # Clean up old entries (older than 24h)
+        self.wallet_market_volume_24h[wallet_address][market_id] = [
+            (ts, amt) for ts, amt in self.wallet_market_volume_24h[wallet_address][market_id]
+            if ts > cutoff
+        ]
+
+        # Add current trade
+        self.wallet_market_volume_24h[wallet_address][market_id].append((now, current_trade_amount))
+
+        # Calculate total 24h volume on this market
+        total_volume = sum(amt for _, amt in self.wallet_market_volume_24h[wallet_address][market_id])
+
+        return total_volume
 
     def _detect_category_from_text(self, text: str, market_id: str = None) -> str:
         """
@@ -1217,8 +1255,9 @@ class WhaleDetector:
                 severity_score
             ))
 
-        # 6b. VIP Wallet - ANY trade from high-volume, successful, or large-trade-history wallets
+        # 6b. VIP Wallet - trades from high-volume, successful, or large-trade-history wallets
         # Skip for anonymous traders
+        # UPDATED: Only alert if single trade >= $5k OR 24h cumulative on this market >= $5k
         if not self._is_anonymous_trader(trade.trader_address):
             is_vip = profile.is_vip(
                 min_volume=self.vip_min_volume,
@@ -1226,17 +1265,33 @@ class WhaleDetector:
                 min_large_trades=self.vip_min_large_trades
             )
             if is_vip:
-                vip_reason = profile.get_vip_reason(
-                    min_volume=self.vip_min_volume,
-                    min_win_rate=self.vip_min_win_rate,
-                    min_large_trades=self.vip_min_large_trades
+                # Check if trade meets VIP alert threshold
+                # Either single trade >= $5k OR 24h cumulative on this market >= $5k
+                cumulative_24h = self._get_wallet_market_volume_24h(
+                    trade.trader_address, trade.market_id, trade.amount_usd, trade.timestamp
                 )
-                severity_score = 8  # VIP trades are high priority
-                triggered_conditions.append((
-                    "VIP_WALLET",
-                    f"⭐ VIP WALLET: {vip_reason} - placed ${trade.amount_usd:,.0f} bet",
-                    severity_score
-                ))
+                meets_threshold = (
+                    trade.amount_usd >= self.vip_min_alert_threshold or
+                    cumulative_24h >= self.vip_min_alert_threshold
+                )
+
+                if meets_threshold:
+                    vip_reason = profile.get_vip_reason(
+                        min_volume=self.vip_min_volume,
+                        min_win_rate=self.vip_min_win_rate,
+                        min_large_trades=self.vip_min_large_trades
+                    )
+                    severity_score = 8  # VIP trades are high priority
+                    # Include 24h volume info if it's what triggered the alert
+                    if trade.amount_usd < self.vip_min_alert_threshold:
+                        msg = f"⭐ VIP WALLET: {vip_reason} - ${cumulative_24h:,.0f} cumulative 24h volume on this market"
+                    else:
+                        msg = f"⭐ VIP WALLET: {vip_reason} - placed ${trade.amount_usd:,.0f} bet"
+                    triggered_conditions.append((
+                        "VIP_WALLET",
+                        msg,
+                        severity_score
+                    ))
 
         # ==========================================
         # NEW DETECTORS (7-11) - Inspired by Polymaster, PredictOS, PolyTrack

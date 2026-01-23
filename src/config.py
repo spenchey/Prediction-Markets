@@ -117,6 +117,7 @@ class Settings(BaseSettings):
     VIP_MIN_WIN_RATE: float = 0.55  # 55% win rate to be VIP (if enough resolved)
     VIP_MIN_LARGE_TRADES: int = 5  # 5+ trades over $5k to be VIP
     VIP_LARGE_TRADE_THRESHOLD: float = 5000.0  # What counts as a "large trade"
+    VIP_MIN_ALERT_THRESHOLD: float = 5000.0  # $5k minimum for VIP alerts (single trade OR 24h cumulative on market)
 
     # Twitter Queue - private channel for high-value alerts to post to X
     DISCORD_TWITTER_WEBHOOK_URL: Optional[str] = None

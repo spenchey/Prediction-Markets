@@ -65,10 +65,11 @@ prediction-market-tracker/
 ### Key Constraint: No Sports Markets
 Sports markets (NFL, NBA, etc.) are filtered OUT. Focus is on political/crypto/events where insider information is more likely.
 
-### Minimum Alert Threshold (updated 2026-01-19)
-- **Minimum**: $1,000 USD (raised from $450)
-- **Exempt types** (bypass minimum): `CLUSTER_ACTIVITY`, `REPEAT_ACTOR`, `HEAVY_ACTOR`
-- Cluster activity and multi-trade execution alerts fire at any amount
+### Minimum Alert Threshold (updated 2026-01-23)
+- **General minimum**: $2,000 USD
+- **VIP wallet minimum**: $5,000 USD (single trade OR 24h cumulative on same market)
+- **Exempt types** (bypass general minimum): `CLUSTER_ACTIVITY`, `WHALE_TRADE`, `ENTITY_ACTIVITY`
+- VIP wallets now require significant volume - small $1-$100 trades from VIP wallets are filtered out
 
 ### Filtered High-Frequency Markets (added 2026-01-16)
 The following market types are also filtered out to reduce noise:
@@ -1256,11 +1257,12 @@ A wallet qualifies as VIP if it meets ANY of these criteria:
 ⭐ VIP WALLET: $150,000 lifetime volume | 62% win rate - placed $2,500 bet
 ```
 
-**Key Features:**
-- VIP_WALLET alerts trigger for ANY trade from VIP wallets (no minimum amount)
-- Bypasses both minimum threshold ($450) and crypto threshold ($974)
+**Key Features (updated 2026-01-23):**
+- VIP_WALLET alerts require $5,000+ (single trade OR 24h cumulative volume on same market)
+- Small trades from VIP wallets ($1, $23, etc.) are now filtered out
 - Routes to dedicated VIP thread (overrides category-based routing)
 - Shows VIP reason: volume, win rate, or large trade count
+- If triggered by 24h cumulative, message shows total volume on that market
 
 ### Discord Thread
 
