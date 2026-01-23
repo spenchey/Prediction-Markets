@@ -1387,10 +1387,11 @@ class WhaleDetector:
 
         # 14. Entity Activity Detection (multi-wallet entity trading)
         # Skip for anonymous traders
+        # Skip giant entities (50+ wallets) - likely false positives from shared CEX funders
         entity = None
         if not self._is_anonymous_trader(trade.trader_address):
             entity = self.get_entity_for_wallet(trade.trader_address)
-        if entity and entity.wallet_count >= 2 and trade.amount_usd >= 1000:
+        if entity and entity.wallet_count >= 2 and entity.wallet_count <= 50 and trade.amount_usd >= 1000:
             severity_score = 9  # Entity activity is very interesting
             triggered_conditions.append((
                 "ENTITY_ACTIVITY",
