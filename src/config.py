@@ -53,14 +53,18 @@ class Settings(BaseSettings):
     KALSHI_PRIVATE_KEY_B64: Optional[str] = None  # Base64-encoded RSA private key
 
     # ============================================
-    # WHALE DETECTION SETTINGS (Elite Signals Only - Stricter)
+    # WHALE DETECTION SETTINGS (Elite Signals Only - Industry Standard)
     # ============================================
     WHALE_THRESHOLD_USDC: float = 10000.0  # $10,000 - minimum for whale alerts
-    NEW_WALLET_THRESHOLD_USDC: float = 5000.0  # $5,000 - new wallets must be significant (raised from $1k)
+    NEW_WALLET_THRESHOLD_USDC: float = 5000.0  # $5,000 - new wallets must be significant
     FOCUSED_WALLET_THRESHOLD_USDC: float = 5000.0  # $5,000 - minimum for focused wallet alerts
-    WHALE_STD_MULTIPLIER: float = 4.0  # Z-score threshold for statistical anomaly (raised from 3.0)
+    WHALE_STD_MULTIPLIER: float = 4.0  # Z-score threshold for statistical anomaly
     MIN_TRADES_FOR_STATS: int = 100  # Minimum trades before using statistics
-    MIN_ALERT_THRESHOLD_USD: float = 2000.0  # $2,000 - minimum USD to trigger any alert (raised from $1k)
+    MIN_ALERT_THRESHOLD_USD: float = 10000.0  # $10,000 - industry standard whale threshold
+
+    # Concentrated activity detection (new wallets making repeated bets)
+    CONCENTRATED_ACTIVITY_THRESHOLD: float = 5000.0  # $5k cumulative on single market
+    CONCENTRATED_ACTIVITY_WINDOW_MINUTES: int = 60  # Within 1 hour
 
     # ============================================
     # MARKET FILTERING SETTINGS
@@ -70,11 +74,11 @@ class Settings(BaseSettings):
     EXCLUDE_KEYWORDS: Optional[str] = None
 
     # ============================================
-    # SMART MONEY DETECTION
+    # SMART MONEY DETECTION (Industry Standard - PolyTrack criteria)
     # ============================================
-    SMART_MONEY_MIN_WIN_RATE: float = 0.60  # 60% win rate to be considered smart money
-    SMART_MONEY_MIN_VOLUME: float = 50000.0  # $50k minimum volume
-    SMART_MONEY_MIN_RESOLVED: int = 10  # Minimum resolved bets for win rate calculation
+    SMART_MONEY_MIN_WIN_RATE: float = 0.55  # 55% win rate to be considered smart money
+    SMART_MONEY_MIN_VOLUME: float = 100000.0  # $100k minimum volume (industry standard)
+    SMART_MONEY_MIN_RESOLVED: int = 50  # Minimum resolved bets for win rate calculation
 
     # ============================================
     # EMAIL NOTIFICATIONS (Resend.com)

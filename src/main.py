@@ -189,11 +189,8 @@ async def lifespan(app: FastAPI):
             std_multiplier=settings.WHALE_STD_MULTIPLIER,
             min_trades_for_stats=settings.MIN_TRADES_FOR_STATS,
             min_alert_threshold_usd=settings.MIN_ALERT_THRESHOLD_USD,
-            vip_min_volume=settings.VIP_MIN_TOTAL_VOLUME,
-            vip_min_win_rate=settings.VIP_MIN_WIN_RATE,
-            vip_min_large_trades=settings.VIP_MIN_LARGE_TRADES,
-            vip_large_trade_threshold=settings.VIP_LARGE_TRADE_THRESHOLD,
-            vip_min_alert_threshold=settings.VIP_MIN_ALERT_THRESHOLD
+            concentrated_activity_threshold=settings.CONCENTRATED_ACTIVITY_THRESHOLD,
+            concentrated_activity_window_minutes=settings.CONCENTRATED_ACTIVITY_WINDOW_MINUTES,
         )
         logger.info("✅ Whale detector initialized")
     except Exception as e:

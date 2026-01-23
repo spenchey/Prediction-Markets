@@ -65,11 +65,21 @@ prediction-market-tracker/
 ### Key Constraint: No Sports Markets
 Sports markets (NFL, NBA, etc.) are filtered OUT. Focus is on political/crypto/events where insider information is more likely.
 
-### Minimum Alert Threshold (updated 2026-01-23)
-- **General minimum**: $2,000 USD
-- **VIP wallet minimum**: $5,000 USD (single trade OR 24h cumulative on same market)
-- **Exempt types** (bypass general minimum): `CLUSTER_ACTIVITY`, `WHALE_TRADE`, `ENTITY_ACTIVITY`
-- VIP wallets now require significant volume - small $1-$100 trades from VIP wallets are filtered out
+### Minimum Alert Threshold (updated 2026-01-23) - MAJOR OVERHAUL
+Based on competitor research (Polywhaler, PolyTrack, Oddpool), alerts have been drastically reduced:
+
+- **General minimum**: **$10,000 USD** (industry standard)
+- **Only 4 alert types enabled** (down from 14):
+  - `WHALE_TRADE` - Single trades ≥ $10,000
+  - `SMART_MONEY` - Proven winners ($100k+ volume, 55%+ win rate, 50+ positions) making $5k+ trades
+  - `CLUSTER_ACTIVITY` - Coordinated multi-wallet trading on same market
+  - `CONCENTRATED_ACTIVITY` - NEW: Wallets making repeated bets totaling $5k+ on same market in 1 hour
+
+### Disabled Alert Types
+The following were disabled as too noisy per competitor research:
+- `UNUSUAL_SIZE`, `MARKET_ANOMALY`, `NEW_WALLET`, `FOCUSED_WALLET`
+- `VIP_WALLET`, `REPEAT_ACTOR`, `HEAVY_ACTOR`, `EXTREME_CONFIDENCE`
+- `WHALE_EXIT`, `CONTRARIAN`, `HIGH_IMPACT`, `ENTITY_ACTIVITY`
 
 ### Filtered High-Frequency Markets (added 2026-01-16)
 The following market types are also filtered out to reduce noise:
@@ -447,25 +457,27 @@ TWITTER_MAX_PER_HOUR=20        # Rate limit (strict criteria limits naturally)
 
 ---
 
-## Alert Types (14 total)
+## Alert Types (4 active, 10 disabled)
 
-### Original (6)
-1. **WHALE_TRADE** - Trades >= $10,000
-2. **UNUSUAL_SIZE** - Z-score > 3 std deviations
-3. **MARKET_ANOMALY** - Unusual for specific market
-4. **NEW_WALLET** - First-time traders with $1k+ bets
-5. **FOCUSED_WALLET** - Wallets in <=3 markets with 5+ trades
-6. **SMART_MONEY** - Wallets with >60% win rate
+### Active Alerts (Industry Standard)
+1. **WHALE_TRADE** - Single trades ≥ $10,000 (industry standard threshold)
+2. **SMART_MONEY** - Wallets with $100k+ volume, 55%+ win rate, 50+ resolved positions making $5k+ trades
+3. **CLUSTER_ACTIVITY** - Coordinated multi-wallet trading on same market within 5 minutes
+4. **CONCENTRATED_ACTIVITY** - Wallet making repeated bets totaling $5k+ on same market within 1 hour (detects new wallet accumulation patterns like $500 x 10 = $5k)
 
-### Added January 2026 (8)
-7. **REPEAT_ACTOR** - 2+ trades in last hour
-8. **HEAVY_ACTOR** - 5+ trades in last 24 hours
-9. **EXTREME_CONFIDENCE** - Bets at 90%+ or 10%- odds
-10. **WHALE_EXIT** - Large positions being unwound
-11. **CONTRARIAN** - Betting against market consensus
-12. **CLUSTER_ACTIVITY** - Coordinated multi-wallet trading
-13. **HIGH_IMPACT** - Trade is large % of market's hourly volume
-14. **ENTITY_ACTIVITY** - Multi-wallet entity detected
+### Disabled Alerts (too noisy per competitor research)
+- ~~UNUSUAL_SIZE~~ - Statistical outliers are noise, not signal
+- ~~MARKET_ANOMALY~~ - Redundant with UNUSUAL_SIZE
+- ~~NEW_WALLET~~ - Replaced by CONCENTRATED_ACTIVITY
+- ~~FOCUSED_WALLET~~ - Not predictive
+- ~~VIP_WALLET~~ - High volume ≠ smart money; SMART_MONEY is better
+- ~~REPEAT_ACTOR~~ - Replaced by CONCENTRATED_ACTIVITY
+- ~~HEAVY_ACTOR~~ - Replaced by CONCENTRATED_ACTIVITY
+- ~~EXTREME_CONFIDENCE~~ - Too common, not actionable
+- ~~WHALE_EXIT~~ - Hard to interpret, noisy
+- ~~CONTRARIAN~~ - Too common, not actionable
+- ~~HIGH_IMPACT~~ - Competitors don't use this
+- ~~ENTITY_ACTIVITY~~ - Too many false positives from CEX funders
 
 ---
 
