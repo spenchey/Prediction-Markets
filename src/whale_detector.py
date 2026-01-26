@@ -521,8 +521,12 @@ class WhaleDetector:
         vip_min_win_rate: float = 0.55,         # 55% win rate to be VIP
         vip_min_large_trades: int = 5,          # 5+ large trades to be VIP
         vip_large_trade_threshold: float = 5_000,  # What counts as "large"
+        vip_min_alert_threshold: float = 5_000,  # $5k min for VIP alerts (single trade OR 24h cumulative)
         # Multi-signal requirement (Elite Signals Only mode)
         min_triggers_required: int = 2,         # Require 2+ signals (except exempt types)
+        # Concentrated activity detection (new wallets making repeated bets on same market)
+        concentrated_activity_threshold: float = 5_000,  # $5k cumulative to trigger
+        concentrated_activity_window_minutes: int = 60,  # Within 1 hour
     ):
         """
         Initialize the whale detector with comprehensive detection algorithms.
@@ -562,17 +566,23 @@ class WhaleDetector:
         self.vip_min_win_rate = vip_min_win_rate
         self.vip_min_large_trades = vip_min_large_trades
         self.vip_large_trade_threshold = vip_large_trade_threshold
+        self.vip_min_alert_threshold = vip_min_alert_threshold
 
         # NEW: Stricter thresholds for "Elite Signals Only" mode
         self.new_wallet_threshold_usd = new_wallet_threshold_usd  # Store for later increase
         self.std_multiplier = std_multiplier  # Already stored, but noting we'll increase it
 
+        # Concentrated activity detection
+        self.concentrated_activity_threshold = concentrated_activity_threshold
+        self.concentrated_activity_window = timedelta(minutes=concentrated_activity_window_minutes)
+
         # Alert types exempt from minimum threshold AND multi-signal requirement
         # These are so significant they always alert alone
-        self.exempt_alert_types = {"WHALE_TRADE", "CLUSTER_ACTIVITY", "VIP_WALLET", "ENTITY_ACTIVITY"}
+        # UPDATED: Only essential signals per industry research
+        self.exempt_alert_types = {"WHALE_TRADE", "CLUSTER_ACTIVITY", "SMART_MONEY", "CONCENTRATED_ACTIVITY"}
 
         # Alert types that bypass crypto filtering (high-value signals)
-        self.crypto_exempt_types = {"CLUSTER_ACTIVITY", "WHALE_TRADE", "SMART_MONEY", "VIP_WALLET"}
+        self.crypto_exempt_types = {"CLUSTER_ACTIVITY", "WHALE_TRADE", "SMART_MONEY", "CONCENTRATED_ACTIVITY"}
 
         # Track wallet profiles (in production, store in database)
         self.wallet_profiles: Dict[str, WalletProfile] = {}
@@ -591,6 +601,10 @@ class WhaleDetector:
 
         # NEW: Market prices cache (for contrarian/extreme confidence detection)
         self.market_prices: Dict[str, Dict[str, float]] = {}  # market_id -> {"Yes": 0.65, "No": 0.35}
+
+        # Track 24-hour volume per wallet per market for VIP alerts
+        # Structure: {wallet_address: {market_id: [(timestamp, amount_usd), ...]}}
+        self.wallet_market_volume_24h: Dict[str, Dict[str, List[tuple]]] = {}
 
         # NEW: Cluster detection - track recent trades by market for timing analysis
         # Structure: market_id -> [(wallet_address, timestamp, amount_usd), ...]
@@ -626,6 +640,87 @@ class WhaleDetector:
         if not trader_address:
             return True
         return trader_address.startswith(self.anonymous_trader_prefixes)
+
+    def _get_wallet_market_volume_24h(self, wallet_address: str, market_id: str, current_trade_amount: float, current_time: datetime) -> float:
+        """
+        Get 24-hour cumulative volume for a wallet on a specific market.
+        Also records the current trade in the tracking structure.
+
+        Returns total volume including the current trade.
+        """
+        now = current_time or datetime.utcnow()
+        cutoff = now - timedelta(hours=24)
+
+        # Initialize tracking for this wallet if needed
+        if wallet_address not in self.wallet_market_volume_24h:
+            self.wallet_market_volume_24h[wallet_address] = {}
+
+        # Initialize tracking for this market if needed
+        if market_id not in self.wallet_market_volume_24h[wallet_address]:
+            self.wallet_market_volume_24h[wallet_address][market_id] = []
+
+        # Clean up old entries (older than 24h)
+        self.wallet_market_volume_24h[wallet_address][market_id] = [
+            (ts, amt) for ts, amt in self.wallet_market_volume_24h[wallet_address][market_id]
+            if ts > cutoff
+        ]
+
+        # Add current trade
+        self.wallet_market_volume_24h[wallet_address][market_id].append((now, current_trade_amount))
+
+        # Calculate total 24h volume on this market
+        total_volume = sum(amt for _, amt in self.wallet_market_volume_24h[wallet_address][market_id])
+
+        return total_volume
+
+    def _check_concentrated_activity(self, wallet_address: str, market_id: str, current_trade_amount: float, current_time: datetime, profile) -> dict:
+        """
+        Check if a wallet is showing concentrated activity on a single market.
+
+        This detects new or low-activity wallets making repeated bets on the same market
+        that cumulatively reach a significant amount (e.g., 10x $500 = $5k in 1 hour).
+
+        Returns dict with:
+        - is_concentrated: bool
+        - cumulative_volume: float
+        - trade_count: int
+        - is_new_wallet: bool
+        """
+        now = current_time or datetime.utcnow()
+        cutoff = now - self.concentrated_activity_window
+
+        # Initialize tracking if needed
+        if wallet_address not in self.wallet_market_volume_24h:
+            self.wallet_market_volume_24h[wallet_address] = {}
+        if market_id not in self.wallet_market_volume_24h[wallet_address]:
+            self.wallet_market_volume_24h[wallet_address][market_id] = []
+
+        # Get trades within the concentrated activity window
+        recent_trades = [
+            (ts, amt) for ts, amt in self.wallet_market_volume_24h[wallet_address][market_id]
+            if ts > cutoff
+        ]
+
+        # Add current trade to calculation (it's already been added to the list by _get_wallet_market_volume_24h)
+        cumulative_volume = sum(amt for _, amt in recent_trades)
+        trade_count = len(recent_trades)
+
+        # Is this a "new" wallet? (few total trades across all markets)
+        is_new_wallet = profile.total_trades <= 20
+
+        # Concentrated activity = cumulative volume >= threshold within window
+        # Must have at least 2 trades (not just one big trade - that's WHALE_TRADE)
+        is_concentrated = (
+            cumulative_volume >= self.concentrated_activity_threshold and
+            trade_count >= 2
+        )
+
+        return {
+            "is_concentrated": is_concentrated,
+            "cumulative_volume": cumulative_volume,
+            "trade_count": trade_count,
+            "is_new_wallet": is_new_wallet
+        }
 
     def _detect_category_from_text(self, text: str, market_id: str = None) -> str:
         """
@@ -1163,16 +1258,17 @@ class WhaleDetector:
                 severity_score
             ))
 
-        # 2. Statistically unusual trade (global)
-        is_unusual, z_score = self._is_statistically_unusual(trade.amount_usd)
-        if is_unusual and trade.amount_usd < self.whale_threshold_usd:
-            severity_score = 6 if z_score < self.std_multiplier + 2 else 8
-            max_z_score = z_score
-            triggered_conditions.append((
-                "UNUSUAL_SIZE",
-                f"📊 UNUSUAL TRADE: ${trade.amount_usd:,.0f} is {z_score:.1f} std devs above average",
-                severity_score
-            ))
+        # 2. Statistically unusual trade (global) - DISABLED per industry research
+        # Competitors only track $10k+ trades, not statistical outliers
+        # is_unusual, z_score = self._is_statistically_unusual(trade.amount_usd)
+        # if is_unusual and trade.amount_usd < self.whale_threshold_usd:
+        #     severity_score = 6 if z_score < self.std_multiplier + 2 else 8
+        #     max_z_score = z_score
+        #     triggered_conditions.append((
+        #         "UNUSUAL_SIZE",
+        #         f"📊 UNUSUAL TRADE: ${trade.amount_usd:,.0f} is {z_score:.1f} std devs above average",
+        #         severity_score
+        #     ))
 
         # 3. Market-specific anomaly (DISABLED - redundant with UNUSUAL_SIZE)
         # if market_n >= 20 and market_std > 0:
@@ -1187,15 +1283,15 @@ class WhaleDetector:
         #             severity_score
         #         ))
 
-        # 4. New wallet making significant trade
-        # Skip for anonymous traders (platforms that don't expose trader identity)
-        if profile.is_new_wallet and trade.amount_usd >= self.new_wallet_threshold_usd and not self._is_anonymous_trader(trade.trader_address):
-            severity_score = 8 if trade.amount_usd >= 5000 else 6
-            triggered_conditions.append((
-                "NEW_WALLET",
-                f"🆕 NEW WALLET: First-time trader placed ${trade.amount_usd:,.0f} bet (only {profile.total_trades} trades)",
-                severity_score
-            ))
+        # 4. New wallet making significant trade - DISABLED, replaced by CONCENTRATED_ACTIVITY
+        # Single trades from new wallets are noise; concentrated activity is signal
+        # if profile.is_new_wallet and trade.amount_usd >= self.new_wallet_threshold_usd and not self._is_anonymous_trader(trade.trader_address):
+        #     severity_score = 8 if trade.amount_usd >= 5000 else 6
+        #     triggered_conditions.append((
+        #         "NEW_WALLET",
+        #         f"🆕 NEW WALLET: First-time trader placed ${trade.amount_usd:,.0f} bet (only {profile.total_trades} trades)",
+        #         severity_score
+        #     ))
 
         # 5. Focused wallet (DISABLED - not predictive enough)
         # Skip for anonymous traders
@@ -1209,58 +1305,33 @@ class WhaleDetector:
 
         # 6. Smart money (high win-rate wallet) making a trade
         # Skip for anonymous traders
-        if profile.is_smart_money and trade.amount_usd >= 500 and not self._is_anonymous_trader(trade.trader_address):
+        # Industry standard: $100k+ volume, 55%+ win rate, 50+ resolved positions
+        if profile.is_smart_money and trade.amount_usd >= 5000 and not self._is_anonymous_trader(trade.trader_address):
             severity_score = 9  # Smart money is always high priority
             triggered_conditions.append((
                 "SMART_MONEY",
-                f"🧠 SMART MONEY: Wallet with {profile.win_rate:.0%} win rate placed ${trade.amount_usd:,.0f} bet",
+                f"🧠 SMART MONEY: Wallet with {profile.win_rate:.0%} win rate ({profile.total_resolved_bets} resolved, ${profile.total_volume_usd:,.0f} volume) placed ${trade.amount_usd:,.0f} bet",
                 severity_score
             ))
 
-        # 6b. VIP Wallet - ANY trade from high-volume, successful, or large-trade-history wallets
-        # Skip for anonymous traders
-        if not self._is_anonymous_trader(trade.trader_address):
-            is_vip = profile.is_vip(
-                min_volume=self.vip_min_volume,
-                min_win_rate=self.vip_min_win_rate,
-                min_large_trades=self.vip_min_large_trades
-            )
-            if is_vip:
-                vip_reason = profile.get_vip_reason(
-                    min_volume=self.vip_min_volume,
-                    min_win_rate=self.vip_min_win_rate,
-                    min_large_trades=self.vip_min_large_trades
-                )
-                severity_score = 8  # VIP trades are high priority
-                triggered_conditions.append((
-                    "VIP_WALLET",
-                    f"⭐ VIP WALLET: {vip_reason} - placed ${trade.amount_usd:,.0f} bet",
-                    severity_score
-                ))
+        # 6b. VIP Wallet - DISABLED per industry research
+        # VIP/whale status should be determined by SMART_MONEY criteria (proven track record)
+        # Not just high volume - that creates too much noise
+        # if not self._is_anonymous_trader(trade.trader_address):
+        #     is_vip = profile.is_vip(...)
+        #     ... (removed for clarity)
 
         # ==========================================
         # NEW DETECTORS (7-11) - Inspired by Polymaster, PredictOS, PolyTrack
         # ==========================================
 
-        # 7. Repeat Actor Detection (2+ trades in 1 hour)
-        # Skip for anonymous traders
-        if profile.is_repeat_actor and trade.amount_usd >= 1000 and not self._is_anonymous_trader(trade.trader_address):
-            severity_score = 7
-            triggered_conditions.append((
-                "REPEAT_ACTOR",
-                f"🔄 REPEAT ACTOR: Wallet made {profile.trades_last_hour} trades in last hour (${trade.amount_usd:,.0f} this trade)",
-                severity_score
-            ))
+        # 7. Repeat Actor Detection - DISABLED, replaced by CONCENTRATED_ACTIVITY
+        # if profile.is_repeat_actor and trade.amount_usd >= 1000 and not self._is_anonymous_trader(trade.trader_address):
+        #     ...
 
-        # 8. Heavy Actor Detection (5+ trades in 24 hours)
-        # Skip for anonymous traders
-        if profile.is_heavy_actor and trade.amount_usd >= 500 and not self._is_anonymous_trader(trade.trader_address):
-            severity_score = 8
-            triggered_conditions.append((
-                "HEAVY_ACTOR",
-                f"⚡ HEAVY ACTOR: Wallet made {profile.trades_last_24h} trades in 24h (${profile.total_volume_usd:,.0f} total volume)",
-                severity_score
-            ))
+        # 8. Heavy Actor Detection - DISABLED, replaced by CONCENTRATED_ACTIVITY
+        # if profile.is_heavy_actor and trade.amount_usd >= 500 and not self._is_anonymous_trader(trade.trader_address):
+        #     ...
 
         # 9. Extreme Confidence Detection (DISABLED - too common, not actionable)
         # is_extreme, extreme_direction = self._is_extreme_confidence(trade)
@@ -1320,28 +1391,38 @@ class WhaleDetector:
         # ADVANCED DETECTORS (from ChatGPT v5)
         # ==========================================
 
-        # 13. High Impact Trade Detection (STRICTER - requires 25%+ of hourly volume)
-        impact_ratio = self._calculate_impact_ratio(trade)
-        if impact_ratio >= 0.25 and trade.amount_usd >= 1000:  # Raised from 10% to 25%
-            severity_score = 8 if impact_ratio >= 0.50 else 7
-            triggered_conditions.append((
-                "HIGH_IMPACT",
-                f"💥 HIGH IMPACT: ${trade.amount_usd:,.0f} is {impact_ratio:.0%} of market's hourly volume",
-                severity_score
-            ))
+        # 13. High Impact Trade Detection - DISABLED per industry research
+        # Too noisy, competitors don't use this metric
+        # impact_ratio = self._calculate_impact_ratio(trade)
+        # if impact_ratio >= 0.25 and trade.amount_usd >= 1000:
+        #     ...
 
-        # 14. Entity Activity Detection (multi-wallet entity trading)
+        # 14. Entity Activity Detection - DISABLED per industry research
+        # Too many false positives from shared CEX funders; CLUSTER_ACTIVITY is better
+        # entity = None
+        # if not self._is_anonymous_trader(trade.trader_address):
+        #     entity = self.get_entity_for_wallet(trade.trader_address)
+        # if entity and entity.wallet_count >= 2 and entity.wallet_count <= 50 and trade.amount_usd >= 1000:
+        #     ...
+
+        # 15. Concentrated Activity Detection (NEW)
+        # Detects wallets making repeated smaller bets on same market that cumulate to significant amount
+        # Example: $500 x 10 trades = $5k cumulative in 1 hour = signal
         # Skip for anonymous traders
-        entity = None
         if not self._is_anonymous_trader(trade.trader_address):
-            entity = self.get_entity_for_wallet(trade.trader_address)
-        if entity and entity.wallet_count >= 2 and trade.amount_usd >= 1000:
-            severity_score = 9  # Entity activity is very interesting
-            triggered_conditions.append((
-                "ENTITY_ACTIVITY",
-                f"👥 ENTITY DETECTED: Wallet is part of {entity.wallet_count}-wallet entity (conf: {entity.confidence:.0%})",
-                severity_score
-            ))
+            concentrated = self._check_concentrated_activity(
+                trade.trader_address, trade.market_id, trade.amount_usd, trade.timestamp, profile
+            )
+            if concentrated["is_concentrated"]:
+                # Higher severity for new wallets showing this pattern
+                severity_score = 9 if concentrated["is_new_wallet"] else 8
+                wallet_type = "NEW WALLET" if concentrated["is_new_wallet"] else "WALLET"
+                window_mins = int(self.concentrated_activity_window.total_seconds() / 60)
+                triggered_conditions.append((
+                    "CONCENTRATED_ACTIVITY",
+                    f"🎯 CONCENTRATED: {wallet_type} made {concentrated['trade_count']} trades totaling ${concentrated['cumulative_volume']:,.0f} on this market in {window_mins}min",
+                    severity_score
+                ))
 
         # ==========================================
         # CONSOLIDATION: Create single alert with all triggered conditions

@@ -65,10 +65,21 @@ prediction-market-tracker/
 ### Key Constraint: No Sports Markets
 Sports markets (NFL, NBA, etc.) are filtered OUT. Focus is on political/crypto/events where insider information is more likely.
 
-### Minimum Alert Threshold (updated 2026-01-19)
-- **Minimum**: $1,000 USD (raised from $450)
-- **Exempt types** (bypass minimum): `CLUSTER_ACTIVITY`, `REPEAT_ACTOR`, `HEAVY_ACTOR`
-- Cluster activity and multi-trade execution alerts fire at any amount
+### Minimum Alert Threshold (updated 2026-01-23) - MAJOR OVERHAUL
+Based on competitor research (Polywhaler, PolyTrack, Oddpool), alerts have been drastically reduced:
+
+- **General minimum**: **$10,000 USD** (industry standard)
+- **Only 4 alert types enabled** (down from 14):
+  - `WHALE_TRADE` - Single trades ≥ $10,000
+  - `SMART_MONEY` - Proven winners ($100k+ volume, 55%+ win rate, 50+ positions) making $5k+ trades
+  - `CLUSTER_ACTIVITY` - Coordinated multi-wallet trading on same market
+  - `CONCENTRATED_ACTIVITY` - NEW: Wallets making repeated bets totaling $5k+ on same market in 1 hour
+
+### Disabled Alert Types
+The following were disabled as too noisy per competitor research:
+- `UNUSUAL_SIZE`, `MARKET_ANOMALY`, `NEW_WALLET`, `FOCUSED_WALLET`
+- `VIP_WALLET`, `REPEAT_ACTOR`, `HEAVY_ACTOR`, `EXTREME_CONFIDENCE`
+- `WHALE_EXIT`, `CONTRARIAN`, `HIGH_IMPACT`, `ENTITY_ACTIVITY`
 
 ### Filtered High-Frequency Markets (added 2026-01-16)
 The following market types are also filtered out to reduce noise:
@@ -446,25 +457,27 @@ TWITTER_MAX_PER_HOUR=20        # Rate limit (strict criteria limits naturally)
 
 ---
 
-## Alert Types (14 total)
+## Alert Types (4 active, 10 disabled)
 
-### Original (6)
-1. **WHALE_TRADE** - Trades >= $10,000
-2. **UNUSUAL_SIZE** - Z-score > 3 std deviations
-3. **MARKET_ANOMALY** - Unusual for specific market
-4. **NEW_WALLET** - First-time traders with $1k+ bets
-5. **FOCUSED_WALLET** - Wallets in <=3 markets with 5+ trades
-6. **SMART_MONEY** - Wallets with >60% win rate
+### Active Alerts (Industry Standard)
+1. **WHALE_TRADE** - Single trades ≥ $10,000 (industry standard threshold)
+2. **SMART_MONEY** - Wallets with $100k+ volume, 55%+ win rate, 50+ resolved positions making $5k+ trades
+3. **CLUSTER_ACTIVITY** - Coordinated multi-wallet trading on same market within 5 minutes
+4. **CONCENTRATED_ACTIVITY** - Wallet making repeated bets totaling $5k+ on same market within 1 hour (detects new wallet accumulation patterns like $500 x 10 = $5k)
 
-### Added January 2026 (8)
-7. **REPEAT_ACTOR** - 2+ trades in last hour
-8. **HEAVY_ACTOR** - 5+ trades in last 24 hours
-9. **EXTREME_CONFIDENCE** - Bets at 90%+ or 10%- odds
-10. **WHALE_EXIT** - Large positions being unwound
-11. **CONTRARIAN** - Betting against market consensus
-12. **CLUSTER_ACTIVITY** - Coordinated multi-wallet trading
-13. **HIGH_IMPACT** - Trade is large % of market's hourly volume
-14. **ENTITY_ACTIVITY** - Multi-wallet entity detected
+### Disabled Alerts (too noisy per competitor research)
+- ~~UNUSUAL_SIZE~~ - Statistical outliers are noise, not signal
+- ~~MARKET_ANOMALY~~ - Redundant with UNUSUAL_SIZE
+- ~~NEW_WALLET~~ - Replaced by CONCENTRATED_ACTIVITY
+- ~~FOCUSED_WALLET~~ - Not predictive
+- ~~VIP_WALLET~~ - High volume ≠ smart money; SMART_MONEY is better
+- ~~REPEAT_ACTOR~~ - Replaced by CONCENTRATED_ACTIVITY
+- ~~HEAVY_ACTOR~~ - Replaced by CONCENTRATED_ACTIVITY
+- ~~EXTREME_CONFIDENCE~~ - Too common, not actionable
+- ~~WHALE_EXIT~~ - Hard to interpret, noisy
+- ~~CONTRARIAN~~ - Too common, not actionable
+- ~~HIGH_IMPACT~~ - Competitors don't use this
+- ~~ENTITY_ACTIVITY~~ - Too many false positives from CEX funders
 
 ---
 
@@ -1256,11 +1269,12 @@ A wallet qualifies as VIP if it meets ANY of these criteria:
 ⭐ VIP WALLET: $150,000 lifetime volume | 62% win rate - placed $2,500 bet
 ```
 
-**Key Features:**
-- VIP_WALLET alerts trigger for ANY trade from VIP wallets (no minimum amount)
-- Bypasses both minimum threshold ($450) and crypto threshold ($974)
+**Key Features (updated 2026-01-23):**
+- VIP_WALLET alerts require $5,000+ (single trade OR 24h cumulative volume on same market)
+- Small trades from VIP wallets ($1, $23, etc.) are now filtered out
 - Routes to dedicated VIP thread (overrides category-based routing)
 - Shows VIP reason: volume, win rate, or large trade count
+- If triggered by 24h cumulative, message shows total volume on that market
 
 ### Discord Thread
 
@@ -1524,3 +1538,88 @@ Create interactive D3.js charts for whale activity:
 ### Skills Discovery Resource
 
 For finding more skills: [awesome-claude-skills](https://github.com/travisvn/awesome-claude-skills)
+
+---
+
+## Session Log (2026-01-23) - Major Alert System Overhaul
+
+### Problem: Too Many Alerts
+
+User was receiving excessive alerts including:
+- VIP wallet alerts for $1-$23 trades
+- Entity detection alerts showing "2227-wallet entity (95% confidence)" - false positives from shared CEX funders
+- Too many low-value signals cluttering the feed
+
+### Research: Competitor Analysis
+
+Researched industry leaders to understand best practices:
+
+| Platform | Minimum Threshold | Key Criteria |
+|----------|------------------|--------------|
+| [Polywhaler](https://www.polywhaler.com/) | **$10,000** | Impact scores, insider risk indicators |
+| [Oddpool](https://www.oddpool.com/whales) | **$1,000** default, recommends $5k-$10k+ | Customizable filters |
+| [PolyTrack](https://www.polytrackhq.app/blog/polytrack-best-whale-tracker) | **$10,000** for alerts | Trader must have $100k+ volume, 55%+ win rate, 50+ positions |
+
+**Key Finding**: Industry standard is $10,000+ for whale alerts, not $1,000-$2,000.
+
+### Solution: Complete Alert System Overhaul
+
+#### 1. Raised Thresholds to Industry Standard
+- `MIN_ALERT_THRESHOLD_USD`: $2,000 → **$10,000**
+- `SMART_MONEY_MIN_VOLUME`: $50,000 → **$100,000**
+- `SMART_MONEY_MIN_RESOLVED`: 10 → **50** positions
+
+#### 2. Reduced Alert Types (14 → 4)
+
+**Active Alerts:**
+| Alert | Criteria |
+|-------|----------|
+| `WHALE_TRADE` | Single trade ≥ $10,000 |
+| `SMART_MONEY` | $100k+ volume, 55%+ win rate, 50+ positions, making $5k+ trade |
+| `CLUSTER_ACTIVITY` | Multiple wallets trading same market within 5 minutes |
+| `CONCENTRATED_ACTIVITY` | Wallet making repeated bets totaling $5k+ on same market in 1 hour |
+
+**Disabled Alerts (too noisy):**
+- `UNUSUAL_SIZE`, `MARKET_ANOMALY`, `NEW_WALLET`, `FOCUSED_WALLET`
+- `VIP_WALLET`, `REPEAT_ACTOR`, `HEAVY_ACTOR`, `EXTREME_CONFIDENCE`
+- `WHALE_EXIT`, `CONTRARIAN`, `HIGH_IMPACT`, `ENTITY_ACTIVITY`
+
+#### 3. New: CONCENTRATED_ACTIVITY Detection
+
+Detects patterns like "new wallet makes $500 x 10 trades = $5k cumulative on same market in 1 hour":
+
+```
+🎯 CONCENTRATED: NEW WALLET made 10 trades totaling $5,000 on this market in 60min
+```
+
+**Logic:**
+- Tracks cumulative volume per wallet per market within configurable window (default: 1 hour)
+- Triggers when: cumulative ≥ $5,000 AND trade_count ≥ 2
+- Higher severity (9) for new wallets (≤20 total trades), lower (8) for established wallets
+
+**Config:**
+```python
+CONCENTRATED_ACTIVITY_THRESHOLD: float = 5000.0  # $5k cumulative
+CONCENTRATED_ACTIVITY_WINDOW_MINUTES: int = 60   # Within 1 hour
+```
+
+#### 4. Fixed Entity Detection False Positives
+
+Added filter to skip entities with 50+ wallets (likely CEX-funded clusters, not actual coordinated activity).
+
+### Files Changed
+- `src/config.py` - Updated thresholds, added concentrated activity settings
+- `src/whale_detector.py` - Disabled 10 alert types, added `_check_concentrated_activity()` method
+- `src/main.py` - Updated WhaleDetector initialization
+- `CLAUDE.md` - Updated documentation
+
+### Commits
+- `f427677` - Add $5,000 minimum threshold for VIP wallet alerts
+- `cc1f629` - Filter out giant entities (50+ wallets) from alerts
+- `ae7e0f8` - Major alert overhaul based on competitor research
+
+### Expected Impact
+- **Dramatically fewer alerts** - Only truly significant trades
+- **Higher signal quality** - Industry-standard thresholds
+- **New pattern detection** - Catches accumulation via multiple smaller trades
+- **No more CEX false positives** - Giant entity clusters filtered out
