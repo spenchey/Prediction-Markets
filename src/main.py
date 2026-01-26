@@ -745,6 +745,38 @@ async def get_wallet_stats(limit: int = Query(20, ge=1, le=100)):
     }
 
 
+@app.get("/stats/memory")
+async def get_memory_stats():
+    """
+    Track memory usage of in-memory data structures.
+
+    Use this to monitor memory consumption and detect potential memory leaks.
+    """
+    if not detector:
+        return {"error": "Detector not initialized"}
+
+    import sys
+
+    # Calculate approximate memory usage (rough estimates)
+    wallet_memory_bytes = sys.getsizeof(detector.wallet_profiles)
+    for profile in list(detector.wallet_profiles.values())[:100]:  # Sample to avoid slowdown
+        wallet_memory_bytes += sys.getsizeof(profile)
+
+    wallet_memory_mb = wallet_memory_bytes / (1024 * 1024)
+
+    return {
+        "wallet_profiles_count": len(detector.wallet_profiles),
+        "wallet_profiles_mb_estimate": round(wallet_memory_mb, 2),
+        "seen_trades_count": len(monitor.seen_trades) if monitor else 0,
+        "market_stats_count": len(detector.market_stats),
+        "market_hourly_volume_count": len(detector.market_hourly_volume),
+        "recent_trade_sizes_count": len(detector.recent_trade_sizes),
+        "recent_market_trades_total": sum(len(v) for v in detector.recent_market_trades.values()),
+        "wallet_clusters_count": len(detector.wallet_clusters),
+        "warning": "High" if len(detector.wallet_profiles) > 50000 else "Normal" if len(detector.wallet_profiles) > 20000 else "Low"
+    }
+
+
 # =========================================
 # ENHANCED DETECTION ENDPOINTS (v2.0)
 # =========================================

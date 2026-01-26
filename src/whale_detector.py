@@ -1489,6 +1489,35 @@ class WhaleDetector:
         ]
         return sorted(heavy_actors, key=lambda w: w.trades_last_24h, reverse=True)[:limit]
 
+    def cleanup_inactive_wallets(self, max_inactive_days: int = 30, min_wallets_before_cleanup: int = 10000):
+        """
+        Remove wallets that haven't traded in X days to prevent memory growth.
+
+        Only runs cleanup if we have more than min_wallets_before_cleanup profiles.
+        This prevents unbounded memory growth in long-running deployments.
+
+        Args:
+            max_inactive_days: Remove wallets inactive for this many days (default: 30)
+            min_wallets_before_cleanup: Only clean if total wallets exceeds this (default: 10000)
+        """
+        if len(self.wallet_profiles) < min_wallets_before_cleanup:
+            return  # Don't clean if we don't have many wallets yet
+
+        cutoff = datetime.now() - timedelta(days=max_inactive_days)
+        inactive = [
+            addr for addr, profile in self.wallet_profiles.items()
+            if profile.last_seen and profile.last_seen < cutoff
+        ]
+
+        for addr in inactive:
+            del self.wallet_profiles[addr]
+
+        if inactive:
+            logger.info(
+                f"🧹 Memory cleanup: Removed {len(inactive)} inactive wallets "
+                f"(>{max_inactive_days} days). Remaining: {len(self.wallet_profiles)}"
+            )
+
     def get_active_clusters(self, min_volume: float = 10000) -> List[Dict]:
         """
         Get detected wallet clusters (potentially related wallets).
@@ -1782,6 +1811,9 @@ class TradeMonitor:
         if len(self.seen_trades) > 50_000:
             # Remove oldest half
             self.seen_trades = set(list(self.seen_trades)[-25_000:])
+
+        # Periodic wallet cleanup to prevent memory growth (runs when > 10K wallets)
+        self.detector.cleanup_inactive_wallets()
 
         # Fetch market info for context and filtering
         market_ids = {t.market_id for t in all_new_trades}
