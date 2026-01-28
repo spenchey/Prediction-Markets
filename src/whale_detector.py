@@ -137,7 +137,15 @@ def is_sports_market(market_question: str, market_id: str = None) -> bool:
     if market_id:
         id_lower = market_id.lower()
         # Check for sports league codes in ticker
-        sports_ticker_patterns = ['nba', 'nfl', 'mlb', 'nhl', 'mls', 'ncaa', 'ufc', 'pga']
+        sports_ticker_patterns = [
+            'nba', 'nfl', 'mlb', 'nhl', 'mls', 'ncaa', 'ufc', 'pga',
+            'atp', 'wta',  # Tennis
+            'fifa', 'epl', 'laliga', 'bundesliga', 'seriea', 'ligue1',  # Soccer
+            'f1', 'nascar', 'indycar',  # Racing
+            'ncaamb', 'ncaafb', 'ncaabb',  # College specific
+            'boxing', 'mma',  # Combat sports
+            'prem', 'champ',  # Premier/Champions League
+        ]
         if any(pattern in id_lower for pattern in sports_ticker_patterns):
             return True
 
