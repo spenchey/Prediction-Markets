@@ -1257,12 +1257,37 @@ class WhaleDetector:
         # ORIGINAL DETECTORS (1-6)
         # ==========================================
 
-        # 1. Fixed threshold whale trade
+        # 1. Fixed threshold whale trade - with ODDS CONTEXT
+        # Key insight: betting on heavy favorites is normal, not unusual
         if trade.amount_usd >= self.whale_threshold_usd:
             severity_score = self._calculate_severity_score(trade, profile, "WHALE_TRADE")
+
+            # Add odds context to help downstream filtering (Twitter, Discord)
+            price = trade.price
+            odds_context = ""
+            if price is not None and price > 0:
+                implied_prob = price * 100
+                # Determine if this is a favorite or longshot bet
+                if trade.side.lower() == "buy":
+                    # Buying at high price = betting on favorite
+                    if price >= 0.80:
+                        odds_context = f" at {implied_prob:.0f}% odds (heavy favorite)"
+                    elif price <= 0.30:
+                        odds_context = f" at {implied_prob:.0f}% odds (longshot)"
+                    else:
+                        odds_context = f" at {implied_prob:.0f}% odds"
+                else:
+                    # Selling at price X means betting against X% outcome
+                    if price <= 0.20:
+                        odds_context = f" against {implied_prob:.0f}% outcome"
+                    elif price >= 0.70:
+                        odds_context = f" against {implied_prob:.0f}% favorite"
+                    else:
+                        odds_context = f" at {implied_prob:.0f}% price"
+
             triggered_conditions.append((
                 "WHALE_TRADE",
-                f"🐋 WHALE ALERT: ${trade.amount_usd:,.0f} {trade.side} on {trade.outcome}",
+                f"🐋 WHALE ALERT: ${trade.amount_usd:,.0f} {trade.side} on {trade.outcome}{odds_context}",
                 severity_score
             ))
 
@@ -1449,7 +1474,45 @@ class WhaleDetector:
         if not filtered_conditions:
             return []
 
-        # Extract alert types, messages, and find max severity
+        # ==========================================
+        # ODDS-AWARE FILTERING: Large bet ≠ unusual bet
+        # ==========================================
+        # Key insight: $30k on a 90¢ favorite is NORMAL trading
+        # $30k on a 10¢ longshot is UNUSUAL and worth alerting
+        price = trade.price
+        is_heavy_favorite = price is not None and price >= 0.80 and trade.side.lower() == "buy"
+        is_longshot = price is not None and price <= 0.30 and trade.side.lower() == "buy"
+
+        # Get the alert types from filtered conditions
+        alert_types_set = {c[0] for c in filtered_conditions}
+
+        # Interesting signals that warrant alerts even on favorites
+        interesting_signals = {"SMART_MONEY", "CLUSTER_ACTIVITY", "CONCENTRATED_ACTIVITY", "NEW_WALLET"}
+        has_interesting_signal = bool(alert_types_set & interesting_signals)
+
+        if is_heavy_favorite and not has_interesting_signal:
+            # Betting on heavy favorites is NORMAL - apply stricter filtering
+            # Only alert if:
+            # 1. Amount is truly massive ($100k+) - market-moving size
+            # 2. OR there's an interesting signal (smart money, cluster, etc.)
+            if trade.amount_usd < 100_000:
+                logger.debug(f"Filtered heavy favorite bet: ${trade.amount_usd:.0f} at {price*100:.0f}% odds (need $100k+ or interesting signal)")
+                return []
+            else:
+                logger.info(f"Allowing large favorite bet: ${trade.amount_usd:,.0f} at {price*100:.0f}% (massive size)")
+
+        elif is_longshot:
+            # Longshots are inherently interesting - lower threshold ($5k instead of $10k)
+            # These bets show conviction against consensus
+            if trade.amount_usd < 5_000:
+                filtered_conditions = [
+                    (atype, msg, score) for atype, msg, score in filtered_conditions
+                    if atype in self.exempt_alert_types
+                ]
+                if not filtered_conditions:
+                    return []
+
+        # Re-extract after filtering
         alert_types = [c[0] for c in filtered_conditions]
         messages = [c[1] for c in filtered_conditions]
         max_severity_score = max(c[2] for c in filtered_conditions)

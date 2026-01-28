@@ -171,14 +171,15 @@ For NEW_WALLET alerts, add context:
 ## Implementation Priority
 
 ### Phase 1: Quick Wins (This Week)
-1. [ ] Fix Kalshi sports filtering (add ticker patterns)
-2. [ ] Raise Twitter threshold for "favorite" bets (price > 0.75)
-3. [ ] Add price/odds to tweet format for context
+1. [x] Fix Kalshi sports filtering (add ticker patterns) - DONE previously
+2. [x] Raise Twitter threshold for "favorite" bets (price > 80%) - DONE 2026-01-28
+3. [x] Add price/odds to alert format for context - DONE 2026-01-28
 
-### Phase 2: Signal Improvement (Next Week)
-4. [ ] Implement risk-adjusted sizing
-5. [ ] Add contrarian detection priority
-6. [ ] Revise `is_twitter_worthy()` with odds context
+### Phase 2: Signal Improvement (COMPLETED 2026-01-28)
+4. [x] Implement odds-aware filtering in whale_detector.py
+5. [x] Revise `is_twitter_worthy()` with full odds context
+6. [x] Add `trade_price` field to AlertMessage for direct access
+7. [x] Discord embeds now show odds context
 
 ### Phase 3: Content Strategy
 7. [ ] Add "why this matters" to tweets

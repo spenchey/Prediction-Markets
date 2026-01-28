@@ -1789,3 +1789,127 @@ railway logs | grep "Memory cleanup"
 4. Confirm no OOM crashes
 5. Consider database-backed profiles for long-term (optional)
 
+---
+
+## Session Log (2026-01-28) - Odds-Aware Alert Filtering
+
+### Problem: Large Bet ≠ Unusual Bet
+
+User reported that alerts like "$30k on Sinner at 90¢" were cluttering the feed. These are NORMAL bets on heavy favorites, not unusual activity.
+
+**Key Insight:**
+- **$30k on a 90¢ favorite** = risking $30k to win ~$3.3k (normal trading)
+- **$30k on a 10¢ longshot** = risking $30k to potentially win ~$270k (UNUSUAL)
+
+### Solution: Odds-Aware Filtering
+
+#### 1. Twitter Posting Logic (`is_twitter_worthy`)
+
+**File:** `src/alerter.py`
+
+Completely overhauled the `TwitterFormatter.is_twitter_worthy()` method:
+
+| Odds Range | Criteria |
+|------------|----------|
+| **Heavy favorites (>80%)** | Only tweet if $100k+ OR interesting signal (smart money, cluster, etc.) |
+| **Longshots (<30%)** | Lower threshold: $10k+ (inherently unusual) |
+| **Mid-range (30-80%)** | Standard threshold: $25k+ |
+| **Unknown odds** | Conservative: $50k+ or has interesting signals |
+
+**Always Tweet (regardless of odds):**
+- Cluster activity at $5k+ (coordinated wallets)
+- Concentrated activity at $10k+ (accumulation patterns)
+- Smart money at $5k+ (proven track record)
+
+**New Helper Method:**
+```python
+@classmethod
+def _extract_price_from_alert(cls, alert: AlertMessage) -> Optional[float]:
+    """Extract price from trade_price field or parse from message."""
+```
+
+#### 2. Discord Alert Filtering
+
+**File:** `src/whale_detector.py`
+
+Added odds-aware filtering in the alert consolidation section:
+
+```python
+# Key logic:
+is_heavy_favorite = price >= 0.80 and side == "buy"
+is_longshot = price <= 0.30 and side == "buy"
+
+if is_heavy_favorite and not has_interesting_signal:
+    # Only alert if $100k+ (market-moving size)
+    if amount < 100_000:
+        return []  # Filter out normal favorite bets
+```
+
+**Interesting signals that bypass favorite filtering:**
+- `SMART_MONEY` - proven winner making the bet
+- `CLUSTER_ACTIVITY` - coordinated wallets
+- `CONCENTRATED_ACTIVITY` - accumulation pattern
+- `NEW_WALLET` - first-time trader (could indicate fresh capital)
+
+#### 3. Added Odds Context to Alerts
+
+**New AlertMessage field:**
+```python
+trade_price: Optional[float] = None  # Trade price 0.0-1.0 (odds context)
+```
+
+**WHALE_TRADE messages now include odds:**
+```
+🐋 WHALE ALERT: $30,000 buy on Yes at 85% odds (heavy favorite)
+🐋 WHALE ALERT: $10,000 buy on No at 12% odds (longshot)
+```
+
+**Discord embeds now show Odds field:**
+```
+📈 Odds: 🎯 **85%** (Heavy Favorite)
+📈 Odds: 🎲 **12%** (Longshot)
+```
+
+### Files Changed
+
+| File | Changes |
+|------|---------|
+| `src/alerter.py` | `AlertMessage.trade_price`, `is_twitter_worthy()` rewrite, `_extract_price_from_alert()`, Discord odds field |
+| `src/whale_detector.py` | Odds context in WHALE_TRADE message, odds-aware consolidation filtering |
+| `IMPROVEMENT_PLAN.md` | Updated status (Phase 1-2 complete) |
+| `CLAUDE.md` | This documentation |
+
+### Expected Impact
+
+**Before:**
+- $30k on 90¢ favorite → Tweeted, sent to Discord
+- $10k on 10¢ longshot → Same treatment as above
+
+**After:**
+- $30k on 90¢ favorite → FILTERED (unless smart money, cluster, etc.)
+- $10k on 10¢ longshot → Tweeted and alerted (contrarian signal)
+- $100k on 90¢ favorite → Tweeted (massive size moves markets)
+- $5k smart money on 80¢ favorite → Tweeted (proven winner)
+
+### Filtering Logic Summary
+
+| Scenario | Twitter | Discord |
+|----------|---------|---------|
+| $30k on 90¢ favorite (no signals) | ❌ Filter | ❌ Filter |
+| $100k on 90¢ favorite | ✅ Tweet | ✅ Alert |
+| $25k smart money on 85¢ favorite | ✅ Tweet | ✅ Alert |
+| $10k on 15¢ longshot | ✅ Tweet | ✅ Alert |
+| $5k cluster activity on 70¢ | ✅ Tweet | ✅ Alert |
+| $25k on 50¢ (mid-odds) | ✅ Tweet | ✅ Alert |
+
+### Commits
+
+- `TBD` - Add odds-aware filtering for Twitter and Discord alerts
+
+### Key Takeaways
+
+1. **Context matters** - Bet size alone doesn't indicate unusual activity
+2. **Longshots are interesting** - Betting against consensus shows conviction
+3. **Favorites need higher thresholds** - Normal trading behavior otherwise
+4. **Interesting signals override** - Smart money, clusters always surface
+
