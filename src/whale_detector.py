@@ -1641,7 +1641,7 @@ class WhaleDetector:
         ]
         return sorted(heavy_actors, key=lambda w: w.trades_last_24h, reverse=True)[:limit]
 
-    def cleanup_inactive_wallets(self, max_inactive_days: int = 30, min_wallets_before_cleanup: int = 10000):
+    def cleanup_inactive_wallets(self, max_inactive_days: int = 14, min_wallets_before_cleanup: int = 5000):
         """
         Remove wallets that haven't traded in X days to prevent memory growth.
 
@@ -1959,10 +1959,11 @@ class TradeMonitor:
         if not all_new_trades:
             return
 
-        # Keep seen_trades from growing forever
-        if len(self.seen_trades) > 50_000:
-            # Remove oldest half
-            self.seen_trades = set(list(self.seen_trades)[-25_000:])
+        # Keep seen_trades from growing forever - more aggressive limit
+        if len(self.seen_trades) > 20_000:
+            # Remove oldest 75%
+            logger.info(f"🧹 Pruning seen_trades: {len(self.seen_trades)} -> 5000")
+            self.seen_trades = set(list(self.seen_trades)[-5_000:])
 
         # Periodic wallet cleanup to prevent memory growth (runs when > 10K wallets)
         self.detector.cleanup_inactive_wallets()

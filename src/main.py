@@ -24,6 +24,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from loguru import logger
 import sys
+import psutil
+import gc
 
 from .config import settings
 from .database import Database, get_db, TradeRecord, AlertRecord
@@ -398,6 +400,26 @@ async def health_check():
             health["monitor"] = "not_started"
     except Exception as e:
         health["monitor"] = f"error: {str(e)[:100]}"
+
+    # Add memory stats
+    try:
+        process = psutil.Process()
+        mem_info = process.memory_info()
+        health["memory"] = {
+            "rss_mb": round(mem_info.rss / 1024 / 1024, 1),
+            "vms_mb": round(mem_info.vms / 1024 / 1024, 1),
+        }
+        # Add data structure sizes
+        if detector:
+            health["data_sizes"] = {
+                "wallet_profiles": len(detector.wallet_profiles),
+                "seen_trades": len(hybrid_monitor.seen_trades) if hybrid_monitor else 0,
+                "recent_alerts": len(recent_alerts)
+            }
+        # Run garbage collection periodically
+        gc.collect()
+    except Exception as e:
+        health["memory"] = f"error: {str(e)[:50]}"
 
     # Always return 200 so healthcheck passes
     return health
