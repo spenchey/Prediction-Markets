@@ -49,6 +49,12 @@ KALSHI_CATEGORY_KEYWORDS = {
     "World": ["war", "ukraine", "russia", "china", "iran", "israel", "military", "invasion",
               "ceasefire", "nato"],
     "Sports": ["nfl", "nba", "mlb", "super bowl", "world series", "championship", "playoff"],
+    # Esports MUST come before Sports to match first (more specific)
+    "Esports": ["esport", "league of legends", "lol ", "lcs", "lec", "valorant", "vct",
+                "csgo", "cs2", "counter-strike", "dota", "overwatch", "fortnite",
+                "call of duty", "cod ", "cdl", "rocket league", "apex legends",
+                "rainbow six", "pubg", "starcraft", "team liquid", "fnatic", "cloud9",
+                "g2 esports", "100 thieves", "faze", "navi", "t1 ", "fut ", "ea fc"],
 }
 
 
@@ -209,7 +215,12 @@ class KalshiClient:
     def _get_category(self, title: str) -> str:
         """Infer category from market title."""
         title_lower = title.lower()
+        # Check Esports FIRST (before Sports) since keywords can overlap
+        if any(kw in title_lower for kw in KALSHI_CATEGORY_KEYWORDS.get("Esports", [])):
+            return "Esports"
         for category, keywords in KALSHI_CATEGORY_KEYWORDS.items():
+            if category == "Esports":
+                continue  # Already checked
             if any(kw in title_lower for kw in keywords):
                 return category
         return "Other"

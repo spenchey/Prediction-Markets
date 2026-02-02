@@ -113,6 +113,7 @@ class Settings(BaseSettings):
     DISCORD_THREAD_ENTERTAINMENT: Optional[str] = None
     DISCORD_THREAD_WORLD: Optional[str] = None
     DISCORD_THREAD_OTHER: Optional[str] = None  # Fallback for uncategorized
+    DISCORD_THREAD_ESPORTS: Optional[str] = None  # Esports/gaming alerts thread
     DISCORD_THREAD_VIP: Optional[str] = None  # VIP wallet alerts thread
     DISCORD_THREAD_DIGEST: Optional[str] = None  # Daily/weekly digest thread
 

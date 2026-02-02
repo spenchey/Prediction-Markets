@@ -222,6 +222,7 @@ class DiscordAlert(AlertChannel):
             "Politics": getattr(settings, 'DISCORD_THREAD_POLITICS', None),
             "Crypto": getattr(settings, 'DISCORD_THREAD_CRYPTO', None),
             "Sports": getattr(settings, 'DISCORD_THREAD_SPORTS', None),
+            "Esports": getattr(settings, 'DISCORD_THREAD_ESPORTS', None),
             "Finance": getattr(settings, 'DISCORD_THREAD_FINANCE', None),
             "Entertainment": getattr(settings, 'DISCORD_THREAD_ENTERTAINMENT', None),
             "World": getattr(settings, 'DISCORD_THREAD_WORLD', None),
