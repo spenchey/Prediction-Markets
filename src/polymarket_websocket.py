@@ -386,6 +386,7 @@ class HybridTradeMonitor:
         self,
         detector,  # WhaleDetector instance
         on_alert: Optional[Callable] = None,
+        on_trade: Optional[Callable] = None,  # Callback for every trade (for position tracking)
         poll_interval: int = 30,  # Backup polling every 30s
         clients: Optional[List] = None  # Platform clients for polling
     ):
@@ -395,11 +396,13 @@ class HybridTradeMonitor:
         Args:
             detector: WhaleDetector instance for analyzing trades
             on_alert: Callback for whale alerts
+            on_trade: Callback for every trade (for position tracking, accumulation, etc.)
             poll_interval: Seconds between backup polls
             clients: List of platform clients (Polymarket, Kalshi, etc.)
         """
         self.detector = detector
         self.on_alert = on_alert
+        self.on_trade = on_trade
         self.poll_interval = poll_interval
         self.clients = clients or []
 
@@ -604,6 +607,13 @@ class HybridTradeMonitor:
         """Handle a trade from WebSocket."""
         self.ws_trades_processed += 1
 
+        # Call on_trade callback for position tracking
+        if self.on_trade:
+            try:
+                await self.on_trade(trade)
+            except Exception as e:
+                logger.debug(f"Error in trade callback: {e}")
+
         # Get market question from trade metadata
         market_question = getattr(trade, '_ws_title', None)
         slug = getattr(trade, '_ws_slug', None)
@@ -661,6 +671,14 @@ class HybridTradeMonitor:
 
     async def _analyze_trades(self, trades: List[Trade], source: str = "unknown"):
         """Analyze a batch of trades."""
+        # Call on_trade callback for each trade (position tracking)
+        if self.on_trade:
+            for trade in trades:
+                try:
+                    await self.on_trade(trade)
+                except Exception as e:
+                    logger.debug(f"Error in trade callback: {e}")
+
         # Get market questions
         market_questions = {}
         for trade in trades:

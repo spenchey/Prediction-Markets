@@ -217,6 +217,45 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("ℹ️ Kalshi client disabled (KALSHI_ENABLED=false)")
 
+    # Trade callback for position tracking (accumulation detection)
+    async def on_trade_for_position_tracking(trade):
+        """Feed trades to position tracker for accumulation detection."""
+        global position_tracker, recent_accumulation_alerts, alerter
+        if position_tracker:
+            # Convert Trade object to dict for position tracker
+            trade_dict = {
+                'proxyWallet': trade.trader_address,
+                'conditionId': trade.market_id,
+                'size': trade.amount_usd / max(0.01, getattr(trade, 'price', 0.5)),  # Estimate shares
+                'price': getattr(trade, 'price', 0.5),
+                'outcome': trade.outcome,
+                'side': trade.side,
+                'timestamp': trade.timestamp.timestamp() if hasattr(trade.timestamp, 'timestamp') else trade.timestamp,
+                'title': getattr(trade, 'market_question', ''),
+            }
+            
+            # Process trade and check for accumulation alerts
+            alerts = position_tracker.process_trade(trade_dict)
+            
+            # Handle any accumulation alerts
+            for acc_alert in alerts:
+                logger.warning(f"🚨 {acc_alert.message}")
+                recent_accumulation_alerts.insert(0, acc_alert)
+                if len(recent_accumulation_alerts) > MAX_RECENT_ALERTS:
+                    recent_accumulation_alerts.pop()
+                
+                # Send to Discord
+                if alerter:
+                    await alerter.send_position_alert(
+                        wallet=acc_alert.wallet,
+                        wallet_name=acc_alert.wallet_name,
+                        market_question=acc_alert.market_question,
+                        outcome=acc_alert.outcome,
+                        shares=acc_alert.shares,
+                        potential_payout=acc_alert.potential_payout,
+                        usd_spent=acc_alert.usd_spent,
+                    )
+
     # Initialize trade monitor (hybrid WebSocket + polling, or legacy polling)
     try:
         if detector:
@@ -225,6 +264,7 @@ async def lifespan(app: FastAPI):
                 hybrid_monitor = HybridTradeMonitor(
                     detector=detector,
                     on_alert=on_alert_detected,
+                    on_trade=on_trade_for_position_tracking,  # Feed trades to position tracker
                     poll_interval=settings.POLL_INTERVAL,  # Backup polling (30s)
                     clients=platform_clients
                 )
@@ -300,24 +340,47 @@ async def lifespan(app: FastAPI):
                                 market.question
                             )
                             
-                            # Check for whale positions we should alert on
-                            for holder in positions.top_yes_holders[:5]:
-                                if holder['potential_payout'] >= position_tracker.potential_payout_threshold:
-                                    alert_key = f"position_scan:{holder['wallet']}:{market.id}:Yes"
-                                    if alert_key not in position_tracker.sent_alerts:
-                                        logger.warning(f"🐋 WHALE POSITION DETECTED: {holder['pseudonym'] or holder['wallet'][:15]} holds {holder['shares']:,.0f} YES shares on '{market.question[:50]}' (potential ${holder['potential_payout']:,.0f})")
-                                        position_tracker.sent_alerts.add(alert_key)
-                                        
-                                        # Send alert if alerter available
-                                        if alerter:
-                                            await alerter.send_position_alert(
+                            # Check for whale positions we should alert on (both YES and NO)
+                            for outcome, holders in [('Yes', positions.top_yes_holders), ('No', positions.top_no_holders)]:
+                                for holder in holders[:5]:
+                                    if holder['potential_payout'] >= position_tracker.potential_payout_threshold:
+                                        alert_key = f"position_scan:{holder['wallet']}:{market.id}:{outcome}"
+                                        if alert_key not in position_tracker.sent_alerts:
+                                            wallet_name = holder.get('pseudonym') or holder.get('name') or holder['wallet'][:15]
+                                            logger.warning(f"🐋 WHALE POSITION DETECTED: {wallet_name} holds {holder['shares']:,.0f} {outcome} shares on '{market.question[:50]}' (potential ${holder['potential_payout']:,.0f})")
+                                            position_tracker.sent_alerts.add(alert_key)
+                                            
+                                            # Create accumulation alert for API
+                                            from .position_tracker import AccumulationAlert
+                                            acc_alert = AccumulationAlert(
+                                                alert_type='whale_position_scan',
                                                 wallet=holder['wallet'],
-                                                wallet_name=holder['pseudonym'] or holder['name'],
+                                                wallet_name=wallet_name,
+                                                market_id=market.id,
                                                 market_question=market.question,
-                                                outcome='Yes',
+                                                outcome=outcome,
                                                 shares=holder['shares'],
+                                                usd_spent=holder.get('cost', 0),
                                                 potential_payout=holder['potential_payout'],
+                                                accumulation_period='all_time',
+                                                message=f"🐋 WHALE POSITION: {wallet_name} holds ${holder['potential_payout']:,.0f} potential payout on {outcome}",
+                                                severity='CRITICAL',
                                             )
+                                            recent_accumulation_alerts.insert(0, acc_alert)
+                                            if len(recent_accumulation_alerts) > MAX_RECENT_ALERTS:
+                                                recent_accumulation_alerts.pop()
+                                            
+                                            # Send alert to Discord
+                                            if alerter:
+                                                await alerter.send_position_alert(
+                                                    wallet=holder['wallet'],
+                                                    wallet_name=wallet_name,
+                                                    market_question=market.question,
+                                                    outcome=outcome,
+                                                    shares=holder['shares'],
+                                                    potential_payout=holder['potential_payout'],
+                                                    usd_spent=holder.get('cost', 0),
+                                                )
                             
                             await asyncio.sleep(1)  # Rate limiting between markets
                             
