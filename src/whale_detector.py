@@ -1745,6 +1745,175 @@ class WhaleDetector:
             for e in entities
         ]
 
+    # =========================================
+    # MEMORY MANAGEMENT
+    # =========================================
+
+    def get_memory_stats(self) -> Dict:
+        """Get memory usage statistics for all data structures."""
+        import sys
+        
+        # Get approximate memory usage
+        try:
+            import psutil
+            process = psutil.Process()
+            rss_mb = process.memory_info().rss / 1024 / 1024
+            vms_mb = process.memory_info().vms / 1024 / 1024
+        except ImportError:
+            rss_mb = 0
+            vms_mb = 0
+        
+        return {
+            "rss_mb": round(rss_mb, 1),
+            "vms_mb": round(vms_mb, 1),
+            "data_sizes": {
+                "wallet_profiles": len(self.wallet_profiles),
+                "recent_trade_sizes": len(self.recent_trade_sizes),
+                "market_stats": len(self.market_stats),
+                "recent_market_trades": sum(len(v) for v in self.recent_market_trades.values()),
+                "wallet_clusters": len(self.wallet_clusters),
+                "wallet_market_volume_24h": sum(
+                    sum(len(v) for v in market_dict.values())
+                    for market_dict in self.wallet_market_volume_24h.values()
+                ),
+                "market_hourly_volume": len(self.market_hourly_volume),
+                "market_questions": len(self.market_questions),
+                "market_urls": len(self.market_urls),
+                "market_categories": len(self.market_categories),
+            }
+        }
+
+    def cleanup_memory(
+        self,
+        max_wallet_profiles: int = 10000,
+        max_market_stats: int = 5000,
+        max_clusters: int = 1000,
+        max_market_volume_entries: int = 2000,
+        stale_hours: int = 48,
+    ) -> Dict:
+        """
+        Clean up old/stale data to prevent memory bloat.
+        
+        Call this periodically (e.g., every hour) to keep memory bounded.
+        
+        Args:
+            max_wallet_profiles: Max wallets to keep (keeps most recent/active)
+            max_market_stats: Max markets to track stats for
+            max_clusters: Max wallet clusters to keep
+            max_market_volume_entries: Max market volume tracking entries
+            stale_hours: Remove data older than this many hours
+            
+        Returns:
+            Dict with counts of items cleaned up
+        """
+        now = datetime.now()
+        cutoff = now - timedelta(hours=stale_hours)
+        cleaned = {
+            "wallet_profiles_removed": 0,
+            "market_stats_removed": 0,
+            "clusters_removed": 0,
+            "market_trades_removed": 0,
+            "volume_entries_removed": 0,
+        }
+        
+        # 1. Clean wallet_profiles - keep most recently active
+        if len(self.wallet_profiles) > max_wallet_profiles:
+            # Sort by last_seen, keep most recent
+            sorted_wallets = sorted(
+                self.wallet_profiles.items(),
+                key=lambda x: x[1].last_seen or datetime.min,
+                reverse=True
+            )
+            wallets_to_keep = dict(sorted_wallets[:max_wallet_profiles])
+            cleaned["wallet_profiles_removed"] = len(self.wallet_profiles) - len(wallets_to_keep)
+            self.wallet_profiles = wallets_to_keep
+            
+        # 2. Clean market_stats - remove stale markets
+        if len(self.market_stats) > max_market_stats:
+            # Keep markets with most recent trades (by trade count as proxy)
+            sorted_markets = sorted(
+                self.market_stats.items(),
+                key=lambda x: len(x[1].get("trades", [])),
+                reverse=True
+            )
+            markets_to_keep = dict(sorted_markets[:max_market_stats])
+            cleaned["market_stats_removed"] = len(self.market_stats) - len(markets_to_keep)
+            self.market_stats = markets_to_keep
+            
+        # 3. Clean recent_market_trades - remove old entries
+        total_removed = 0
+        for market_id in list(self.recent_market_trades.keys()):
+            original_len = len(self.recent_market_trades[market_id])
+            self.recent_market_trades[market_id] = [
+                (addr, ts, amt) for addr, ts, amt in self.recent_market_trades[market_id]
+                if ts > cutoff
+            ]
+            total_removed += original_len - len(self.recent_market_trades[market_id])
+            # Remove empty markets
+            if not self.recent_market_trades[market_id]:
+                del self.recent_market_trades[market_id]
+        cleaned["market_trades_removed"] = total_removed
+        
+        # 4. Clean wallet_clusters - remove old clusters
+        if len(self.wallet_clusters) > max_clusters:
+            # Sort by last_seen, keep most recent
+            sorted_clusters = sorted(
+                self.wallet_clusters.items(),
+                key=lambda x: x[1].get("last_seen", datetime.min),
+                reverse=True
+            )
+            clusters_to_keep = dict(sorted_clusters[:max_clusters])
+            cleaned["clusters_removed"] = len(self.wallet_clusters) - len(clusters_to_keep)
+            self.wallet_clusters = clusters_to_keep
+            
+        # 5. Clean wallet_market_volume_24h - remove old entries
+        volume_removed = 0
+        cutoff_24h = now - timedelta(hours=24)
+        for wallet in list(self.wallet_market_volume_24h.keys()):
+            for market_id in list(self.wallet_market_volume_24h[wallet].keys()):
+                original_len = len(self.wallet_market_volume_24h[wallet][market_id])
+                self.wallet_market_volume_24h[wallet][market_id] = [
+                    (ts, amt) for ts, amt in self.wallet_market_volume_24h[wallet][market_id]
+                    if ts > cutoff_24h
+                ]
+                volume_removed += original_len - len(self.wallet_market_volume_24h[wallet][market_id])
+                # Remove empty market entries
+                if not self.wallet_market_volume_24h[wallet][market_id]:
+                    del self.wallet_market_volume_24h[wallet][market_id]
+            # Remove empty wallet entries
+            if not self.wallet_market_volume_24h[wallet]:
+                del self.wallet_market_volume_24h[wallet]
+        cleaned["volume_entries_removed"] = volume_removed
+        
+        # 6. Clean market_hourly_volume - remove stale markets
+        if len(self.market_hourly_volume) > max_market_volume_entries:
+            # Sort by last_updated, keep most recent
+            sorted_vol = sorted(
+                self.market_hourly_volume.items(),
+                key=lambda x: x[1].get("last_updated", datetime.min),
+                reverse=True
+            )
+            vol_to_keep = dict(sorted_vol[:max_market_volume_entries])
+            cleaned["market_hourly_volume_removed"] = len(self.market_hourly_volume) - len(vol_to_keep)
+            self.market_hourly_volume = vol_to_keep
+            
+        # 7. Trim market info caches
+        max_cache = 10000
+        for cache_name, cache in [
+            ("market_questions", self.market_questions),
+            ("market_urls", self.market_urls),
+            ("market_categories", self.market_categories),
+        ]:
+            if len(cache) > max_cache:
+                # Keep arbitrary subset (these caches don't have timestamps)
+                keys_to_remove = list(cache.keys())[:-max_cache]
+                for k in keys_to_remove:
+                    del cache[k]
+                cleaned[f"{cache_name}_removed"] = len(keys_to_remove)
+        
+        logger.info(f"Memory cleanup completed: {cleaned}")
+        return cleaned
+
 
 # =========================================
 # REAL-TIME MONITORING

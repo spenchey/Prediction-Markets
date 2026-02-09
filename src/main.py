@@ -24,8 +24,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from loguru import logger
 import sys
-import psutil
-import gc
 
 from .config import settings
 from .database import Database, get_db, TradeRecord, AlertRecord
@@ -263,9 +261,36 @@ async def lifespan(app: FastAPI):
         logger.error(f"❌ Digest scheduler initialization failed: {e}")
         digest_scheduler = None
 
+    # Start periodic memory cleanup task
+    cleanup_task = None
+    async def periodic_cleanup():
+        """Run memory cleanup every hour to prevent OOM."""
+        while True:
+            await asyncio.sleep(3600)  # 1 hour
+            try:
+                if detector:
+                    mem_stats = detector.get_memory_stats()
+                    logger.info(f"Periodic memory check: RSS={mem_stats.get('rss_mb')}MB, wallets={mem_stats.get('data_sizes', {}).get('wallet_profiles', 0)}")
+                    cleanup_result = detector.cleanup_memory()
+                    logger.info(f"Periodic cleanup complete: {cleanup_result}")
+            except Exception as e:
+                logger.error(f"Error in periodic cleanup: {e}")
+
+    if detector:
+        cleanup_task = asyncio.create_task(periodic_cleanup())
+        logger.info("✅ Periodic memory cleanup task started (every 1 hour)")
+
     logger.info("🎉 Application ready!")
 
     yield  # Application runs here
+    
+    # Cancel cleanup task
+    if cleanup_task:
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
     
     # Shutdown
     logger.info("🛑 Shutting down...")
@@ -401,25 +426,29 @@ async def health_check():
     except Exception as e:
         health["monitor"] = f"error: {str(e)[:100]}"
 
-    # Add memory stats
+    # Add memory stats and trigger cleanup if needed
     try:
-        process = psutil.Process()
-        mem_info = process.memory_info()
-        health["memory"] = {
-            "rss_mb": round(mem_info.rss / 1024 / 1024, 1),
-            "vms_mb": round(mem_info.vms / 1024 / 1024, 1),
-        }
-        # Add data structure sizes
         if detector:
-            health["data_sizes"] = {
-                "wallet_profiles": len(detector.wallet_profiles),
-                "seen_trades": len(hybrid_monitor.seen_trades) if hybrid_monitor else 0,
-                "recent_alerts": len(recent_alerts)
+            mem_stats = detector.get_memory_stats()
+            health["memory"] = {
+                "rss_mb": mem_stats.get("rss_mb", 0),
+                "vms_mb": mem_stats.get("vms_mb", 0),
             }
-        # Run garbage collection periodically
-        gc.collect()
+            health["data_sizes"] = mem_stats.get("data_sizes", {})
+            
+            # Auto-cleanup if memory exceeds 500MB or data structures too large
+            data_sizes = mem_stats.get("data_sizes", {})
+            should_cleanup = (
+                mem_stats.get("rss_mb", 0) > 500 or
+                data_sizes.get("wallet_profiles", 0) > 15000 or
+                data_sizes.get("recent_market_trades", 0) > 50000
+            )
+            if should_cleanup:
+                logger.warning(f"Memory cleanup triggered: RSS={mem_stats.get('rss_mb')}MB, wallets={data_sizes.get('wallet_profiles')}")
+                cleanup_result = detector.cleanup_memory()
+                health["cleanup_triggered"] = cleanup_result
     except Exception as e:
-        health["memory"] = f"error: {str(e)[:50]}"
+        health["memory_error"] = str(e)[:100]
 
     # Always return 200 so healthcheck passes
     return health
@@ -766,38 +795,6 @@ async def get_wallet_stats(limit: int = Query(20, ge=1, le=100)):
             }
             for w in wallets
         ]
-    }
-
-
-@app.get("/stats/memory")
-async def get_memory_stats():
-    """
-    Track memory usage of in-memory data structures.
-
-    Use this to monitor memory consumption and detect potential memory leaks.
-    """
-    if not detector:
-        return {"error": "Detector not initialized"}
-
-    import sys
-
-    # Calculate approximate memory usage (rough estimates)
-    wallet_memory_bytes = sys.getsizeof(detector.wallet_profiles)
-    for profile in list(detector.wallet_profiles.values())[:100]:  # Sample to avoid slowdown
-        wallet_memory_bytes += sys.getsizeof(profile)
-
-    wallet_memory_mb = wallet_memory_bytes / (1024 * 1024)
-
-    return {
-        "wallet_profiles_count": len(detector.wallet_profiles),
-        "wallet_profiles_mb_estimate": round(wallet_memory_mb, 2),
-        "seen_trades_count": len(monitor.seen_trades) if monitor else 0,
-        "market_stats_count": len(detector.market_stats),
-        "market_hourly_volume_count": len(detector.market_hourly_volume),
-        "recent_trade_sizes_count": len(detector.recent_trade_sizes),
-        "recent_market_trades_total": sum(len(v) for v in detector.recent_market_trades.values()),
-        "wallet_clusters_count": len(detector.wallet_clusters),
-        "warning": "High" if len(detector.wallet_profiles) > 50000 else "Normal" if len(detector.wallet_profiles) > 20000 else "Low"
     }
 
 
