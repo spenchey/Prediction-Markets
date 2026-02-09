@@ -498,8 +498,8 @@ class PositionTracker:
 def create_position_tracker() -> PositionTracker:
     """Create a position tracker with default settings."""
     return PositionTracker(
-        accumulation_threshold_24h=50000,   # $50K in 24h
-        accumulation_threshold_7d=100000,   # $100K in 7d
-        position_alert_threshold=50000,     # $50K position
-        potential_payout_threshold=500000,  # $500K potential win
+        accumulation_threshold_24h=100000,  # $100K in 24h (raised to reduce noise)
+        accumulation_threshold_7d=250000,   # $250K in 7d (raised to reduce noise)
+        position_alert_threshold=100000,    # $100K position
+        potential_payout_threshold=1000000, # $1M potential win (only mega whales)
     )

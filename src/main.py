@@ -217,44 +217,16 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("ℹ️ Kalshi client disabled (KALSHI_ENABLED=false)")
 
-    # Trade callback for position tracking (accumulation detection)
+    # Trade callback for position tracking - DISABLED
+    # Real-time accumulation tracking was too noisy (every trade triggered alerts).
+    # Instead, we use periodic 6-hour scans to find whale positions.
+    # This is a no-op now but kept for potential future use with better filtering.
     async def on_trade_for_position_tracking(trade):
-        """Feed trades to position tracker for accumulation detection."""
-        global position_tracker, recent_accumulation_alerts, alerter
-        if position_tracker:
-            # Convert Trade object to dict for position tracker
-            trade_dict = {
-                'proxyWallet': trade.trader_address,
-                'conditionId': trade.market_id,
-                'size': trade.amount_usd / max(0.01, getattr(trade, 'price', 0.5)),  # Estimate shares
-                'price': getattr(trade, 'price', 0.5),
-                'outcome': trade.outcome,
-                'side': trade.side,
-                'timestamp': trade.timestamp.timestamp() if hasattr(trade.timestamp, 'timestamp') else trade.timestamp,
-                'title': getattr(trade, 'market_question', ''),
-            }
-            
-            # Process trade and check for accumulation alerts
-            alerts = position_tracker.process_trade(trade_dict)
-            
-            # Handle any accumulation alerts
-            for acc_alert in alerts:
-                logger.warning(f"🚨 {acc_alert.message}")
-                recent_accumulation_alerts.insert(0, acc_alert)
-                if len(recent_accumulation_alerts) > MAX_RECENT_ALERTS:
-                    recent_accumulation_alerts.pop()
-                
-                # Send to Discord
-                if alerter:
-                    await alerter.send_position_alert(
-                        wallet=acc_alert.wallet,
-                        wallet_name=acc_alert.wallet_name,
-                        market_question=acc_alert.market_question,
-                        outcome=acc_alert.outcome,
-                        shares=acc_alert.shares,
-                        potential_payout=acc_alert.potential_payout,
-                        usd_spent=acc_alert.usd_spent,
-                    )
+        """Feed trades to position tracker - DISABLED to reduce noise."""
+        # Skip real-time tracking entirely - too noisy
+        # Kalshi trades are all "KALSHI_ANON" which breaks the per-wallet logic
+        # Use periodic scans instead (every 6 hours)
+        pass
 
     # Initialize trade monitor (hybrid WebSocket + polling, or legacy polling)
     try:
