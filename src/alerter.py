@@ -1255,6 +1255,64 @@ class Alerter:
         logger.info(f"📢 Message sent to {success}/{len(results)} requested channels")
         return results
 
+    async def send_position_alert(
+        self,
+        wallet: str,
+        wallet_name: str,
+        market_question: str,
+        outcome: str,
+        shares: float,
+        potential_payout: float,
+        usd_spent: float = 0,
+    ) -> Dict[str, bool]:
+        """
+        Send a whale position alert (for large accumulated positions).
+        
+        These are different from trade alerts - they represent positions
+        built over time rather than single trades.
+        """
+        # Format the message
+        display_name = wallet_name or wallet[:15] + "..."
+        message = (
+            f"🐋 **WHALE POSITION DETECTED**\n\n"
+            f"**Trader:** {display_name}\n"
+            f"**Market:** {market_question[:100]}\n"
+            f"**Position:** {shares:,.0f} {outcome} shares\n"
+            f"**Potential Payout:** ${potential_payout:,.0f}\n"
+        )
+        if usd_spent > 0:
+            message += f"**Estimated Spent:** ${usd_spent:,.0f}\n"
+        
+        message += f"\n[View Profile](https://polymarket.com/profile/{wallet})"
+        
+        results = {}
+        for channel in self.channels:
+            try:
+                # Only send to Discord for position alerts
+                if channel.name == "Discord":
+                    import httpx
+                    async with httpx.AsyncClient() as client:
+                        payload = {"content": message}
+                        
+                        webhook_url = channel.webhook_url
+                        if hasattr(channel, 'thread_id') and channel.thread_id:
+                            webhook_url = f"{webhook_url}?thread_id={channel.thread_id}"
+                        
+                        response = await client.post(
+                            webhook_url,
+                            json=payload,
+                            timeout=10.0
+                        )
+                        results[channel.name] = response.status_code == 204
+                        
+            except Exception as e:
+                logger.error(f"Error sending position alert to {channel.name}: {e}")
+                results[channel.name] = False
+        
+        success = sum(1 for v in results.values() if v)
+        logger.info(f"📢 Position alert sent to {success}/{len(results)} channels")
+        return results
+
 
 def create_default_alerter() -> Alerter:
     """Create alerter with all configured channels."""

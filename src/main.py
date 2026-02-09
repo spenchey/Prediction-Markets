@@ -33,6 +33,7 @@ from .whale_detector import WhaleDetector, WhaleAlert, TradeMonitor
 from .polymarket_websocket import HybridTradeMonitor
 from .alerter import Alerter, create_default_alerter
 from .scheduler import DigestScheduler, create_digest_scheduler
+from .position_tracker import PositionTracker, AccumulationAlert, create_position_tracker
 from .routers.ai_analysis import router as ai_router
 
 # =========================================
@@ -58,9 +59,11 @@ hybrid_monitor: Optional[HybridTradeMonitor] = None  # WebSocket + polling hybri
 monitor_task: Optional[asyncio.Task] = None
 alerter: Optional[Alerter] = None
 digest_scheduler: Optional[DigestScheduler] = None
+position_tracker: Optional[PositionTracker] = None  # Accumulation tracking
 
 # Store recent alerts in memory for quick access
 recent_alerts: List[WhaleAlert] = []
+recent_accumulation_alerts: List[AccumulationAlert] = []
 MAX_RECENT_ALERTS = 100
 
 
@@ -261,6 +264,79 @@ async def lifespan(app: FastAPI):
         logger.error(f"❌ Digest scheduler initialization failed: {e}")
         digest_scheduler = None
 
+    # Initialize position tracker for accumulation detection
+    global position_tracker
+    position_scan_task = None
+    try:
+        position_tracker = create_position_tracker()
+        logger.info("✅ Position tracker initialized")
+        logger.info(f"   24h accumulation threshold: ${position_tracker.accumulation_threshold_24h:,.0f}")
+        logger.info(f"   7d accumulation threshold: ${position_tracker.accumulation_threshold_7d:,.0f}")
+        logger.info(f"   Potential payout threshold: ${position_tracker.potential_payout_threshold:,.0f}")
+    except Exception as e:
+        logger.error(f"❌ Position tracker initialization failed: {e}")
+        position_tracker = None
+
+    # Start periodic position scanning for top markets
+    async def periodic_position_scan():
+        """Scan top markets for large position holders every 6 hours."""
+        # Wait 5 minutes before first scan to let other services initialize
+        await asyncio.sleep(300)
+        
+        while True:
+            try:
+                if position_tracker:
+                    logger.info("Starting periodic position scan...")
+                    
+                    # Get top markets by volume
+                    async with PolymarketClient() as client:
+                        markets = await client.get_active_markets(limit=20)
+                    
+                    # Scan each market for top holders
+                    for market in markets[:10]:  # Top 10 by volume
+                        try:
+                            positions = await position_tracker.scan_market_positions(
+                                market.id, 
+                                market.question
+                            )
+                            
+                            # Check for whale positions we should alert on
+                            for holder in positions.top_yes_holders[:5]:
+                                if holder['potential_payout'] >= position_tracker.potential_payout_threshold:
+                                    alert_key = f"position_scan:{holder['wallet']}:{market.id}:Yes"
+                                    if alert_key not in position_tracker.sent_alerts:
+                                        logger.warning(f"🐋 WHALE POSITION DETECTED: {holder['pseudonym'] or holder['wallet'][:15]} holds {holder['shares']:,.0f} YES shares on '{market.question[:50]}' (potential ${holder['potential_payout']:,.0f})")
+                                        position_tracker.sent_alerts.add(alert_key)
+                                        
+                                        # Send alert if alerter available
+                                        if alerter:
+                                            await alerter.send_position_alert(
+                                                wallet=holder['wallet'],
+                                                wallet_name=holder['pseudonym'] or holder['name'],
+                                                market_question=market.question,
+                                                outcome='Yes',
+                                                shares=holder['shares'],
+                                                potential_payout=holder['potential_payout'],
+                                            )
+                            
+                            await asyncio.sleep(1)  # Rate limiting between markets
+                            
+                        except Exception as e:
+                            logger.error(f"Error scanning market {market.id}: {e}")
+                    
+                    # Cleanup position tracker memory
+                    position_tracker.cleanup_memory()
+                    logger.info(f"Position scan complete. Stats: {position_tracker.get_stats()}")
+                    
+            except Exception as e:
+                logger.error(f"Error in periodic position scan: {e}")
+            
+            await asyncio.sleep(6 * 3600)  # Every 6 hours
+
+    if position_tracker:
+        position_scan_task = asyncio.create_task(periodic_position_scan())
+        logger.info("✅ Periodic position scan task started (every 6 hours)")
+
     # Start periodic memory cleanup task
     cleanup_task = None
     async def periodic_cleanup():
@@ -273,6 +349,8 @@ async def lifespan(app: FastAPI):
                     logger.info(f"Periodic memory check: RSS={mem_stats.get('rss_mb')}MB, wallets={mem_stats.get('data_sizes', {}).get('wallet_profiles', 0)}")
                     cleanup_result = detector.cleanup_memory()
                     logger.info(f"Periodic cleanup complete: {cleanup_result}")
+                if position_tracker:
+                    position_tracker.cleanup_memory()
             except Exception as e:
                 logger.error(f"Error in periodic cleanup: {e}")
 
@@ -289,6 +367,14 @@ async def lifespan(app: FastAPI):
         cleanup_task.cancel()
         try:
             await cleanup_task
+        except asyncio.CancelledError:
+            pass
+    
+    # Cancel position scan task
+    if position_scan_task:
+        position_scan_task.cancel()
+        try:
+            await position_scan_task
         except asyncio.CancelledError:
             pass
     
@@ -983,6 +1069,125 @@ async def get_wallet_entity(wallet_address: str):
             "confidence": entity.confidence,
             "reason": entity.reason,
         }
+    }
+
+
+# =========================================
+# POSITION TRACKING ENDPOINTS
+# =========================================
+
+@app.get("/positions/accumulators")
+async def get_top_accumulators(limit: int = Query(20, ge=1, le=100)):
+    """
+    Get wallets with highest recent accumulation volume.
+    
+    Tracks wallets building large positions over 24h/7d windows.
+    """
+    if not position_tracker:
+        return {"accumulators": [], "message": "Position tracker not initialized"}
+    
+    accumulators = position_tracker.get_top_accumulators(limit)
+    
+    return {
+        "total_tracked": len(position_tracker.wallets),
+        "accumulators": accumulators,
+        "thresholds": {
+            "accumulation_24h": position_tracker.accumulation_threshold_24h,
+            "accumulation_7d": position_tracker.accumulation_threshold_7d,
+            "potential_payout": position_tracker.potential_payout_threshold,
+        }
+    }
+
+
+@app.get("/positions/market/{market_id}")
+async def get_market_positions(market_id: str, rescan: bool = Query(False)):
+    """
+    Get top position holders for a specific market.
+    
+    Set rescan=true to force a fresh scan of the market's trade history.
+    """
+    if not position_tracker:
+        raise HTTPException(status_code=500, detail="Position tracker not initialized")
+    
+    # Check if we have cached data
+    if market_id in position_tracker.market_positions and not rescan:
+        positions = position_tracker.market_positions[market_id]
+    else:
+        # Scan the market
+        positions = await position_tracker.scan_market_positions(market_id)
+    
+    return {
+        "market_id": market_id,
+        "question": positions.question,
+        "last_updated": positions.last_updated.isoformat() if positions.last_updated else None,
+        "total_yes_shares": positions.total_yes_shares,
+        "total_no_shares": positions.total_no_shares,
+        "unique_yes_holders": positions.unique_yes_holders,
+        "unique_no_holders": positions.unique_no_holders,
+        "top_yes_holders": positions.top_yes_holders,
+        "top_no_holders": positions.top_no_holders,
+    }
+
+
+@app.post("/positions/scan/{market_id}")
+async def scan_market_positions(market_id: str, question: str = Query("")):
+    """
+    Trigger a position scan for a specific market.
+    
+    Returns top holders for both YES and NO outcomes.
+    """
+    if not position_tracker:
+        raise HTTPException(status_code=500, detail="Position tracker not initialized")
+    
+    positions = await position_tracker.scan_market_positions(market_id, question)
+    
+    return {
+        "status": "scan_complete",
+        "market_id": market_id,
+        "question": positions.question,
+        "total_yes_shares": positions.total_yes_shares,
+        "total_no_shares": positions.total_no_shares,
+        "top_yes_holders": positions.top_yes_holders[:10],
+        "top_no_holders": positions.top_no_holders[:10],
+    }
+
+
+@app.get("/positions/stats")
+async def get_position_tracker_stats():
+    """
+    Get position tracker statistics.
+    """
+    if not position_tracker:
+        return {"error": "Position tracker not initialized"}
+    
+    return position_tracker.get_stats()
+
+
+@app.get("/positions/alerts")
+async def get_accumulation_alerts(limit: int = Query(50, ge=1, le=100)):
+    """
+    Get recent accumulation alerts.
+    """
+    return {
+        "total": len(recent_accumulation_alerts),
+        "alerts": [
+            {
+                "alert_type": a.alert_type,
+                "wallet": a.wallet,
+                "wallet_name": a.wallet_name,
+                "market_id": a.market_id,
+                "market_question": a.market_question,
+                "outcome": a.outcome,
+                "shares": a.shares,
+                "usd_spent": a.usd_spent,
+                "potential_payout": a.potential_payout,
+                "accumulation_period": a.accumulation_period,
+                "message": a.message,
+                "severity": a.severity,
+                "timestamp": a.timestamp.isoformat(),
+            }
+            for a in recent_accumulation_alerts[:limit]
+        ]
     }
 
 
