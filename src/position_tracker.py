@@ -496,10 +496,19 @@ class PositionTracker:
 
 # Convenience function to create default tracker
 def create_position_tracker() -> PositionTracker:
-    """Create a position tracker with default settings."""
+    """
+    Create a position tracker with sensible defaults for whale detection.
+    
+    Reference: "thesecondhighlander" had ~$100K spent for $4M potential (2.5% odds)
+    
+    Thresholds calibrated to catch:
+    - Rapid position building ($50K in 24h = someone loading up fast)
+    - Large positions ($100K over 7d = serious conviction)
+    - Meaningful potential payouts ($250K+ = worth alerting about)
+    """
     return PositionTracker(
-        accumulation_threshold_24h=100000,  # $100K in 24h (raised to reduce noise)
-        accumulation_threshold_7d=250000,   # $250K in 7d (raised to reduce noise)
-        position_alert_threshold=100000,    # $100K position
-        potential_payout_threshold=1000000, # $1M potential win (only mega whales)
+        accumulation_threshold_24h=50000,   # $50K in 24h - someone building fast
+        accumulation_threshold_7d=100000,   # $100K in 7d - serious position
+        position_alert_threshold=50000,     # $50K position value
+        potential_payout_threshold=250000,  # $250K potential win - meaningful upside
     )
