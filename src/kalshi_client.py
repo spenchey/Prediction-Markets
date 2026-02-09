@@ -49,12 +49,10 @@ KALSHI_CATEGORY_KEYWORDS = {
     "World": ["war", "ukraine", "russia", "china", "iran", "israel", "military", "invasion",
               "ceasefire", "nato"],
     "Sports": ["nfl", "nba", "mlb", "super bowl", "world series", "championship", "playoff"],
-    # Esports MUST come before Sports to match first (more specific)
-    "Esports": ["esport", "league of legends", "lol ", "lcs", "lec", "valorant", "vct",
-                "csgo", "cs2", "counter-strike", "dota", "overwatch", "fortnite",
-                "call of duty", "cod ", "cdl", "rocket league", "apex legends",
-                "rainbow six", "pubg", "starcraft", "team liquid", "fnatic", "cloud9",
-                "g2 esports", "100 thieves", "faze", "navi", "t1 ", "fut ", "ea fc"],
+    "Esports": ["esport", "esports", "warzone", "valorant", "league of legends", "lol", 
+                "counter-strike", "cs2", "csgo", "dota", "fortnite", "overwatch", "rocket league",
+                "call of duty", "cod", "apex legends", "pubg", "gaming", "twitch rivals",
+                "kxwtamatch", "kxesport"],
 }
 
 
@@ -212,15 +210,17 @@ class KalshiClient:
 
         return await self.http.request(method, path, headers=headers, **kwargs)
 
-    def _get_category(self, title: str) -> str:
-        """Infer category from market title."""
+    def _get_category(self, title: str, ticker: str = "") -> str:
+        """Infer category from market title or ticker."""
         title_lower = title.lower()
-        # Check Esports FIRST (before Sports) since keywords can overlap
-        if any(kw in title_lower for kw in KALSHI_CATEGORY_KEYWORDS.get("Esports", [])):
+        ticker_lower = ticker.lower() if ticker else ""
+        
+        # Check ticker prefixes first (more reliable for Kalshi)
+        if ticker_lower.startswith("kxwtamatch") or ticker_lower.startswith("kxesport"):
             return "Esports"
+        
+        # Then check keywords in title
         for category, keywords in KALSHI_CATEGORY_KEYWORDS.items():
-            if category == "Esports":
-                continue  # Already checked
             if any(kw in title_lower for kw in keywords):
                 return category
         return "Other"
@@ -317,7 +317,7 @@ class KalshiClient:
             liquidity=float(item.get("open_interest", 0) or 0),
             end_date=end_date,
             active=active,
-            category=self._get_category(title)
+            category=self._get_category(title, ticker)
         )
 
     async def get_active_markets(self, limit: int = 100) -> List[Market]:

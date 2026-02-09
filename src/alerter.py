@@ -46,7 +46,6 @@ class AlertMessage:
     market_url: Optional[str] = None  # Link to market page
     trader_url: Optional[str] = None  # Link to trader profile
     position_action: str = "OPENING"  # OPENING, ADDING, CLOSING - trade intent
-    trade_price: Optional[float] = None  # Trade price 0.0-1.0 (odds context)
 
     # Backwards compatibility properties
     @property
@@ -223,6 +222,7 @@ class DiscordAlert(AlertChannel):
             "Crypto": getattr(settings, 'DISCORD_THREAD_CRYPTO', None),
             "Sports": getattr(settings, 'DISCORD_THREAD_SPORTS', None),
             "Esports": getattr(settings, 'DISCORD_THREAD_ESPORTS', None),
+            "Gaming": getattr(settings, 'DISCORD_THREAD_ESPORTS', None),  # Alias
             "Finance": getattr(settings, 'DISCORD_THREAD_FINANCE', None),
             "Entertainment": getattr(settings, 'DISCORD_THREAD_ENTERTAINMENT', None),
             "World": getattr(settings, 'DISCORD_THREAD_WORLD', None),
@@ -309,20 +309,6 @@ class DiscordAlert(AlertChannel):
                 # Single trigger - show just the message
                 description = alert.messages[0] if alert.messages else ""
 
-            # Build odds context string if price available
-            odds_text = None
-            if hasattr(alert, 'trade_price') and alert.trade_price is not None:
-                price = alert.trade_price
-                if alert.side.lower() == "buy":
-                    if price >= 0.80:
-                        odds_text = f"🎯 **{price*100:.0f}%** (Heavy Favorite)"
-                    elif price <= 0.30:
-                        odds_text = f"🎲 **{price*100:.0f}%** (Longshot)"
-                    else:
-                        odds_text = f"**{price*100:.0f}%** implied"
-                else:
-                    odds_text = f"Selling at **{price*100:.0f}¢**"
-
             # Build fields - market question is always first and prominent
             fields = [
                 {"name": "📊 Market", "value": market_text, "inline": False},
@@ -330,16 +316,9 @@ class DiscordAlert(AlertChannel):
                 {"name": "🏦 Platform", "value": alert.platform, "inline": True},
                 {"name": "💰 Amount", "value": f"${alert.trade_amount:,.2f}", "inline": True},
                 {"name": "🎯 Position", "value": position_text, "inline": True},
-            ]
-
-            # Add odds field if available
-            if odds_text:
-                fields.append({"name": "📈 Odds", "value": odds_text, "inline": True})
-
-            fields.extend([
                 {"name": "⚡ Severity", "value": severity_text, "inline": False},
                 {"name": "👤 Trader", "value": trader_text, "inline": False},
-            ])
+            ]
 
             payload = {
                 "embeds": [{
@@ -717,152 +696,35 @@ class TwitterFormatter:
         """
         Determine if an alert is truly exceptional and worthy of the Twitter highlight reel.
 
-        KEY INSIGHT: Large bet ≠ unusual bet. Context matters!
-        - $30k on a 90¢ favorite is NORMAL (risking $30k to win ~$3.3k)
-        - $30k on a 10¢ longshot is UNUSUAL (risking $30k to potentially win ~$270k)
-
-        ODDS-AWARE CRITERIA:
-
-        1. **Heavy favorites (>80% / <20¢ odds on opposite side):**
-           - Only tweet if $100k+ (truly massive)
-           - OR if wallet is interesting (SMART_MONEY, NEW_WALLET, CLUSTER_ACTIVITY)
-
-        2. **Longshots (<30% / >70¢ odds on opposite side):**
-           - Lower threshold: $10k+ (contrarian bets are inherently interesting)
-
-        3. **Mid-range odds (30-80%):**
-           - Standard threshold: $25k+ (significant conviction at fair odds)
-
-        4. **Always tweet regardless of odds:**
-           - Cluster activity (coordinated wallets)
-           - Concentrated activity (accumulation pattern)
-           - Smart money making any significant bet ($5k+)
+        STRICT criteria - must be genuinely noteworthy:
+        1. $10,000+ trades (true whale territory)
+        2. $1,000+ with multi-trade patterns (REPEAT_ACTOR, HEAVY_ACTOR, CLUSTER_ACTIVITY)
+        3. $5,000+ with SMART_MONEY (proven winners making significant bets)
+        4. $5,000+ with NEW_WALLET (first-time whale - rare and interesting)
+        5. 4+ simultaneous triggers (highly unusual activity)
         """
         amount = alert.trade_amount
         types = set(alert.alert_types)
 
-        # Get price/odds from alert messages if available (look for percentage patterns)
-        # The alert messages often contain probability info like "90%" or "0.90"
-        price = cls._extract_price_from_alert(alert)
-
-        # Determine if this is betting on a favorite (high probability outcome)
-        is_heavy_favorite = price is not None and price >= 0.80
-        is_longshot = price is not None and price <= 0.30
-        is_mid_odds = price is not None and 0.30 < price < 0.80
-
-        # ============================================
-        # ALWAYS TWEET: High-signal patterns regardless of odds
-        # ============================================
-
-        # Cluster activity is always interesting (coordinated wallets)
-        if "CLUSTER_ACTIVITY" in types and amount >= 5_000:
+        # Tier 1: True whales ($10k+) always noteworthy
+        if amount >= 10_000:
             return True
 
-        # Concentrated activity (accumulation) at $10k+ cumulative
-        if "CONCENTRATED_ACTIVITY" in types and amount >= 10_000:
+        # Tier 2: Multi-trade patterns at $1k+ (coordinated/repeat activity)
+        multi_trade_types = {"REPEAT_ACTOR", "HEAVY_ACTOR", "CLUSTER_ACTIVITY"}
+        if amount >= 1_000 and types & multi_trade_types:
             return True
 
-        # Smart money making significant bets - they have proven track records
-        if "SMART_MONEY" in types and amount >= 5_000:
+        # Tier 3: Smart money or new whales at $5k+ (quality signals)
+        quality_types = {"SMART_MONEY", "NEW_WALLET", "VIP_WALLET"}
+        if amount >= 5_000 and types & quality_types:
             return True
 
-        # ============================================
-        # ODDS-AWARE LOGIC: Context matters!
-        # ============================================
+        # Tier 4: Highly unusual activity (4+ triggers at once)
+        if len(types) >= 4:
+            return True
 
-        if is_heavy_favorite:
-            # Betting on heavy favorites is NORMAL behavior
-            # Only tweet if:
-            # 1. Amount is HUGE ($100k+) - market-moving size
-            # 2. OR interesting wallet type making the bet
-            interesting_types = {"NEW_WALLET", "SMART_MONEY", "CLUSTER_ACTIVITY", "CONCENTRATED_ACTIVITY"}
-
-            if amount >= 100_000:
-                return True
-
-            if amount >= 25_000 and types & interesting_types:
-                return True
-
-            # Otherwise, even $30k on a 90¢ favorite is not tweet-worthy
-            return False
-
-        elif is_longshot:
-            # Betting on longshots is UNUSUAL - lower threshold
-            # $10k+ on a <30% outcome shows real conviction against consensus
-            if amount >= 10_000:
-                return True
-
-            # Even $5k+ on extreme longshots (<15%) is interesting
-            if price is not None and price <= 0.15 and amount >= 5_000:
-                return True
-
-            return False
-
-        elif is_mid_odds:
-            # Mid-range odds: standard threshold of $25k+
-            # This is "normal" betting territory, need more conviction
-            if amount >= 25_000:
-                return True
-
-            # Lower threshold if there's an interesting signal
-            interesting_types = {"NEW_WALLET", "SMART_MONEY", "CLUSTER_ACTIVITY"}
-            if amount >= 15_000 and types & interesting_types:
-                return True
-
-            return False
-
-        else:
-            # No price data available - fall back to conservative defaults
-            # Only tweet if truly large or has interesting signals
-            if amount >= 50_000:
-                return True
-
-            interesting_types = {"SMART_MONEY", "CLUSTER_ACTIVITY", "CONCENTRATED_ACTIVITY", "NEW_WALLET"}
-            if amount >= 10_000 and types & interesting_types:
-                return True
-
-            # 4+ simultaneous triggers indicates highly unusual activity
-            if len(types) >= 4 and amount >= 5_000:
-                return True
-
-            return False
-
-    @classmethod
-    def _extract_price_from_alert(cls, alert: AlertMessage) -> Optional[float]:
-        """
-        Extract the trade price/probability from alert data.
-
-        Looks for price info in:
-        1. Direct trade_price field (most reliable)
-        2. Alert messages (percentage patterns)
-
-        Returns float 0.0-1.0 representing probability, or None if not found.
-        """
-        import re
-
-        # First priority: use trade_price directly if available
-        if hasattr(alert, 'trade_price') and alert.trade_price is not None:
-            if 0 <= alert.trade_price <= 1:
-                return alert.trade_price
-
-        # Fallback: parse from alert message text
-        # Look for patterns like "90%", "0.90", "85% odds"
-        for msg in alert.messages:
-            # Pattern: percentage like "90%" or "90% odds"
-            pct_match = re.search(r'(\d{1,2}(?:\.\d+)?)\s*%\s*(?:odds)?', msg)
-            if pct_match:
-                pct = float(pct_match.group(1))
-                if 0 <= pct <= 100:
-                    return pct / 100.0
-
-            # Pattern: decimal probability like "0.90"
-            prob_match = re.search(r'\b(0\.\d{1,3})\b', msg)
-            if prob_match:
-                prob = float(prob_match.group(1))
-                if 0 <= prob <= 1:
-                    return prob
-
-        return None
+        return False
 
 
 class TwitterQueueAlert(AlertChannel):
@@ -974,20 +836,6 @@ class TwitterQueueAlert(AlertChannel):
             # Generate hashtags for footer
             hashtags = TwitterFormatter.get_hashtags(alert)
 
-            # Build odds context string if price available
-            odds_text = None
-            if hasattr(alert, 'trade_price') and alert.trade_price is not None:
-                price = alert.trade_price
-                if alert.side.lower() == "buy":
-                    if price >= 0.80:
-                        odds_text = f"🎯 **{price*100:.0f}%** (Heavy Favorite)"
-                    elif price <= 0.30:
-                        odds_text = f"🎲 **{price*100:.0f}%** (Longshot)"
-                    else:
-                        odds_text = f"**{price*100:.0f}%** implied"
-                else:
-                    odds_text = f"Selling at **{price*100:.0f}¢**"
-
             # Build fields - same as main Discord alerts
             fields = [
                 {"name": "📊 Market", "value": market_text, "inline": False},
@@ -995,16 +843,9 @@ class TwitterQueueAlert(AlertChannel):
                 {"name": "🏦 Platform", "value": alert.platform, "inline": True},
                 {"name": "💰 Amount", "value": f"${alert.trade_amount:,.2f}", "inline": True},
                 {"name": "🎯 Position", "value": position_text, "inline": True},
-            ]
-
-            # Add odds field if available
-            if odds_text:
-                fields.append({"name": "📈 Odds", "value": odds_text, "inline": True})
-
-            fields.extend([
                 {"name": "⚡ Severity", "value": severity_text, "inline": False},
                 {"name": "👤 Trader", "value": trader_text, "inline": False},
-            ])
+            ]
 
             payload = {
                 "embeds": [{
@@ -1120,7 +961,6 @@ class Alerter:
             market_url=mkt_url,
             trader_url=trader_url,
             position_action=getattr(whale_alert, 'position_action', 'OPENING'),
-            trade_price=getattr(whale_alert.trade, 'price', None),
         )
         
         results = {}

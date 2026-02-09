@@ -109,6 +109,7 @@ class Settings(BaseSettings):
     DISCORD_THREAD_POLITICS: Optional[str] = None
     DISCORD_THREAD_CRYPTO: Optional[str] = None
     DISCORD_THREAD_SPORTS: Optional[str] = None
+    DISCORD_THREAD_ESPORTS: Optional[str] = None  # Esports/gaming alerts
     DISCORD_THREAD_FINANCE: Optional[str] = None
     DISCORD_THREAD_ENTERTAINMENT: Optional[str] = None
     DISCORD_THREAD_WORLD: Optional[str] = None
