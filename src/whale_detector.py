@@ -1985,7 +1985,7 @@ class TradeMonitor:
                 try:
                     await self.on_alert(alert)
                 except Exception as e:
-                    logger.error(f"Error in alert callback: {e}")
+                    import traceback; logger.error(f"Error in alert callback: {e}\n{traceback.format_exc()}")
 
 
 # =========================================
