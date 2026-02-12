@@ -546,15 +546,21 @@ async def health_check():
         "message": "App is running"
     }
 
-    # Check database connectivity
+    # Check database connectivity (with timeout to prevent health check hanging)
     try:
         if db:
+            import asyncio
             from sqlalchemy import text
-            async with db.async_session() as session:
-                await session.execute(text("SELECT 1"))
-            health["database"] = "connected"
+            async def db_check():
+                async with db.async_session() as session:
+                    await session.execute(text("SELECT 1"))
+                return "connected"
+            # 5 second timeout for DB check
+            health["database"] = await asyncio.wait_for(db_check(), timeout=5.0)
         else:
             health["database"] = "not_initialized"
+    except asyncio.TimeoutError:
+        health["database"] = "timeout"
     except Exception as e:
         health["database"] = f"error: {str(e)[:50]}"
 
