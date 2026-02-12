@@ -166,11 +166,17 @@ async def lifespan(app: FastAPI):
     logger.info(f"📊 DATABASE_URL configured: {'Yes' if settings.DATABASE_URL else 'No'}")
     logger.info(f"📊 DATABASE_URL prefix: {settings.DATABASE_URL[:30] if settings.DATABASE_URL else 'None'}...")
 
-    # Initialize database with error handling
+    # Initialize database with error handling and timeout
     try:
+        import asyncio
         db = Database()
-        await db.init()
+        # 10 second timeout for database initialization
+        await asyncio.wait_for(db.init(), timeout=10.0)
         logger.info("✅ Database initialized")
+    except asyncio.TimeoutError:
+        logger.error("❌ Database initialization timed out (10s)")
+        logger.warning("⚠️ Continuing without database - some features will be limited")
+        db = None
     except Exception as e:
         logger.error(f"❌ Database initialization failed: {e}")
         logger.warning("⚠️ Continuing without database - some features will be limited")
