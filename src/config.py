@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     # ============================================
     # WHALE DETECTION SETTINGS (Elite Signals Only - Industry Standard)
     # ============================================
-    WHALE_THRESHOLD_USDC: float = 10000.0  # $10,000 - minimum for whale alerts
+    WHALE_THRESHOLD_USDC: float = 5000.0  # $5,000 - minimum for whale alerts
     NEW_WALLET_THRESHOLD_USDC: float = 5000.0  # $5,000 - new wallets must be significant
     FOCUSED_WALLET_THRESHOLD_USDC: float = 5000.0  # $5,000 - minimum for focused wallet alerts
     WHALE_STD_MULTIPLIER: float = 4.0  # Z-score threshold for statistical anomaly
